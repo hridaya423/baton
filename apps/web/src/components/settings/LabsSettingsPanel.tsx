@@ -26,6 +26,7 @@ export function LabsSettingsPanel() {
         <LinkedEnvironmentsRow />
         <MentionIndexRow />
         <SimlockHostsRow />
+        <ToolCallCardsRow />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
@@ -225,6 +226,24 @@ function SimlockHostsRow() {
             updateSettings({ simlockDeviceHostsEnabled: Boolean(checked) })
           }
           aria-label="Simlock device hosts"
+        />
+      }
+    />
+  );
+}
+
+function ToolCallCardsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("tool-call-cards")}
+      description="Show tool calls in a live card while the agent works, with status and time for each call. Finished calls fold into one line."
+      control={
+        <Switch
+          checked={settings.toolCallCards}
+          onCheckedChange={(checked) => updateSettings({ toolCallCards: Boolean(checked) })}
+          aria-label="Tool call cards"
         />
       }
     />

@@ -1,5 +1,15 @@
-import { useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useLayoutEffect,
+  useRef,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { cn } from "../../lib/utils";
+
+/** Rows in a tool card get room to scan. */
+const RowDensity = createContext<"grouped" | "card">("grouped");
 
 /** Groups may span virtualized timeline items. Each part owns its trailing space. */
 export function WorkLogBlock({
@@ -26,8 +36,20 @@ export function WorkLogBlock({
   );
 }
 
-export function WorkLogList({ children }: { children: ReactNode }) {
-  return <div className="flex min-w-0 flex-col gap-1">{children}</div>;
+export function WorkLogList({
+  density = "grouped",
+  children,
+}: {
+  density?: "grouped" | "card";
+  children: ReactNode;
+}) {
+  return (
+    <RowDensity value={density}>
+      <div className={cn("flex min-w-0 flex-col", density === "grouped" && "gap-1")}>
+        {children}
+      </div>
+    </RowDensity>
+  );
 }
 
 type RowContent = {
@@ -107,9 +129,11 @@ export function WorkLogTarget({ children, mono = false }: { children: ReactNode;
 const interactionClassName =
   "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
 
-function rowClassName(interactive: boolean) {
+function useRowClassName(interactive: boolean) {
+  const density = use(RowDensity);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-md pe-1.5 text-left transition-colors",
+    "group/timeline-row relative w-full min-w-0 rounded-md pe-1.5 text-left transition-colors data-running:bg-foreground/[0.05]",
+    density === "card" && "ps-2 py-0.5 hover:bg-foreground/[0.03]",
     interactive && interactionClassName,
   );
 }
@@ -121,7 +145,7 @@ export function WorkLogButton({
   wrapLabel = false,
   ...buttonProps
 }: RowContent & Omit<ComponentProps<"button">, "className" | "style" | "children">) {
-  const className = rowClassName(true);
+  const className = useRowClassName(true);
   return (
     <button {...buttonProps} type="button" className={className}>
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
@@ -138,7 +162,7 @@ export function WorkLogRow({
   children,
   ...rowProps
 }: RowContent & Omit<ComponentProps<"div">, "className" | "style">) {
-  const className = rowClassName(rowProps.onClick !== undefined);
+  const className = useRowClassName(rowProps.onClick !== undefined);
   return (
     <div {...rowProps} className={className}>
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />

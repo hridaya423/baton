@@ -2416,6 +2416,60 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps a working run's calls in one card below its text with tool call cards", () => {
+    const command = (id: string, second: number, status: "completed" | "inProgress") => ({
+      id: `${id}-entry`,
+      kind: "work" as const,
+      createdAt: `2026-01-01T00:00:0${second}Z`,
+      entry: {
+        id,
+        createdAt: `2026-01-01T00:00:0${second}Z`,
+        runId: "turn-1" as never,
+        label: `Ran ${id}`,
+        command: id,
+        requestKind: "command" as const,
+        tone: "tool" as const,
+        toolLifecycleStatus: status,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        command("pwd", 5, "completed"),
+        {
+          id: "assistant-commentary-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:06Z",
+          message: {
+            id: "assistant-commentary" as never,
+            role: "assistant",
+            text: "Next, a short sleep.",
+            runId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:06Z",
+            updatedAt: "2026-01-01T00:00:06Z",
+            streaming: false,
+          },
+        },
+        command("sleep", 7, "inProgress"),
+      ],
+      latestRun: {
+        runId: "turn-1" as never,
+        status: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      toolCallCards: true,
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["working", "message", "work-live"]);
+    expect(
+      rows.find((row) => row.kind === "work-live")?.groupedEntries.map((entry) => entry.id),
+    ).toEqual(["pwd", "sleep"]);
+  });
+
   it("does not revive stale in-progress tools before a fresh send has a turn id", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

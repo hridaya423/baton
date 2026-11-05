@@ -72,6 +72,7 @@ import {
 import { type WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { useClientSettings } from "~/hooks/useSettings";
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
@@ -687,6 +688,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
   );
   const slashCommandCatalog = useTimelineSlashCommandCatalog(slashCommands, skills);
+  const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
     pendingApprovalRequestIds,
@@ -705,6 +707,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     availableRevertTurnCounts,
     worktreeSetup,
     slashCommands: slashCommandCatalog,
+    toolCallCards,
   });
   // A find match or citation inside the running turn needs its rows, not the window that replaces them.
   const [windowlessCitationKey, setWindowlessCitationKey] = useState<string | null>(null);
@@ -1526,7 +1529,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 workingHistoryOpen ||
                 workingHistoryCollapsing
                   ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
+                  : // Text lands above a live tool card, so an eased follow drops the card, then lifts it.
+                    isWorking &&
+                      !prefersReducedMotion &&
+                      !toolCallCards &&
+                      settlingListIdentity === null
                     ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
                     : TIMELINE_MAINTAIN_SCROLL_AT_END
               }

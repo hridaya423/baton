@@ -583,6 +583,7 @@ type MessagesTimelineRowContent =
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
       hasFailure: boolean;
+      groupedEntries: WorkLogEntry[];
     }
   | {
       kind: "turn-fold";
@@ -1668,6 +1669,8 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   /** Commands and skills of the thread's provider, for telling a command from a path. */
   slashCommands?: SlashCommandCatalog;
+  /** Beta tool call cards: the working run's calls share one card below its text. */
+  toolCallCards?: boolean;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
   const startsOpen = transcriptFoldsStartOpen(input.transcriptView ?? "normal");
@@ -1789,6 +1792,14 @@ export function deriveMessagesTimelineRows(input: {
     for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
       const entry = timelineEntries[index]!;
       if (
+        input.toolCallCards &&
+        entry.kind === "message" &&
+        entry.message.role === "assistant" &&
+        runIdIsActiveResponse(entry.message.runId)
+      ) {
+        continue;
+      }
+      if (
         entry.kind !== "work" ||
         entry.entry.tone === "error" ||
         entry.entry.sourceActivityKind === "runtime.error" ||
@@ -1827,7 +1838,9 @@ export function deriveMessagesTimelineRows(input: {
     (latestVisibleToolEntry !== undefined &&
       workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry) &&
       !input.pendingApprovalRequestIds?.size);
+  // A card keeps showing its failed call; the old rows swap it for a thinking row.
   const latestToolFailed =
+    input.toolCallCards !== true &&
     latestRunningToolEntry === undefined &&
     latestVisibleToolEntry !== undefined &&
     latestVisibleToolEntry.entry.toolLifecycleStatus !== "declined" &&
@@ -2011,7 +2024,7 @@ export function deriveMessagesTimelineRows(input: {
       appendWorkingRow();
     }
 
-    if (timelineEntry.id === activeWorkPlacementEntryId) {
+    if (timelineEntry.id === activeWorkPlacementEntryId && !input.toolCallCards) {
       appendActiveWorkRows();
     }
 
@@ -2254,6 +2267,7 @@ export function deriveMessagesTimelineRows(input: {
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),
+            groupedEntries: visibleGroupedEntries,
           });
           if (expanded) {
             nextRows.push(
@@ -2388,6 +2402,8 @@ export function deriveMessagesTimelineRows(input: {
           : undefined,
     });
   }
+  // Only the run's own text can follow its calls, so the end is the bottom of the run.
+  if (input.toolCallCards) appendActiveWorkRows();
 
   const setupHandedOff =
     input.worktreeSetup !== null &&
@@ -3389,7 +3405,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.summaryKind === bw.summaryKind &&
         a.toolSurface === bw.toolSurface &&
         Equal.equals(a.toolIcon, bw.toolIcon) &&
-        a.hasFailure === bw.hasFailure
+        a.hasFailure === bw.hasFailure &&
+        Equal.equals(a.groupedEntries, bw.groupedEntries)
       );
     }
 

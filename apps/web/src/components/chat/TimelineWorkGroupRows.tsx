@@ -58,7 +58,7 @@ import {
   type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { workEntryDisplayIndicatesToolFailure } from "../../session-logic";
+import { workEntryDisplayIndicatesToolFailure, workLogEntryIsToolLike } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   Minimize2Icon,
@@ -103,6 +103,8 @@ import { presentSlashCommand } from "./timelineSlashCommands";
 import { commandRunsTests } from "@t3tools/shared/toolOutput";
 import { DiffStatBlocks } from "./DiffStatLabel";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { useClientSettings } from "../../hooks/useSettings";
+import { LiveToolCard, ToolCardBody, ToolGroupLine, groupHasTools } from "./ToolCallCard";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -119,6 +121,7 @@ export const WorkGroupSection = memo(function WorkGroupSection({
 }) {
   const { workspaceRoot, routeThreadKey, onToggleWorkEntry, pendingApprovals, transcriptView } =
     use(TimelineRowCtx);
+  const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
   const onToggleStandaloneEntry = () => onToggleWorkEntry(disclosureAnchorKey);
   const nonEmptyEntries = groupedEntries.filter((entry) => {
     const item = entry.projectedItem?.item;
@@ -138,15 +141,18 @@ export const WorkGroupSection = memo(function WorkGroupSection({
     return <ReasoningTraceContent entries={nonEmptyEntries} />;
   }
   if (isExpandedToolGroup) {
-    return (
+    const inCard = toolCallCards && groupHasTools(nonEmptyEntries);
+    const entries = (
       <ExpandedWorkGroupEntries
         key={`${routeThreadKey}:${anchorKey}:${transcriptView}`}
         anchorKey={anchorKey}
         disclosureAnchorKey={disclosureAnchorKey}
         entries={nonEmptyEntries}
         workspaceRoot={workspaceRoot}
+        density={inCard ? "card" : "grouped"}
       />
     );
+    return inCard ? <ToolCardBody>{entries}</ToolCardBody> : entries;
   }
 
   return (
@@ -173,19 +179,22 @@ function WorkingTimer({ createdAt, clock = false }: { createdAt: string; clock?:
   );
 }
 
-const compactWorkEntryHeight = 24;
+const compactWorkEntryHeight = { grouped: 24, card: 28 } as const;
 
 function ExpandedWorkGroupEntries({
   anchorKey,
   disclosureAnchorKey,
   entries,
   workspaceRoot,
+  density,
 }: {
   anchorKey: string;
   disclosureAnchorKey: string;
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
+  density: "grouped" | "card";
 }) {
+  const rowHeight = compactWorkEntryHeight[density];
   const { workGroupViewState: viewState, onToggleWorkEntry, transcriptView } = use(TimelineRowCtx);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
@@ -275,10 +284,7 @@ function ExpandedWorkGroupEntries({
     const openedByHand = transcriptRowsStartOpen(transcriptView) ? [] : viewState.expandedEntries;
     for (const entryId of openedByHand) {
       if (state?.indexByKey(entryId) === undefined) continue;
-      height += Math.max(
-        0,
-        (state.sizes.get(entryId) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
-      );
+      height += Math.max(0, (state.sizes.get(entryId) ?? rowHeight) - rowHeight);
     }
     setExpandedContentHeight(height);
   };
@@ -288,14 +294,14 @@ function ExpandedWorkGroupEntries({
 
   return (
     <WorkGroupViewCtx value={groupView}>
-      <WorkLogList>
+      <WorkLogList density={density}>
         <LegendList
           ref={listRef}
           data={entries}
           extraData={workspaceRoot}
           keyExtractor={workEntryKey}
           renderItem={renderEntry}
-          estimatedItemSize={compactWorkEntryHeight}
+          estimatedItemSize={rowHeight}
           drawDistance={240}
           recycleItems
           {...(initialScrollIndex ? { initialScrollIndex } : {})}
@@ -319,7 +325,10 @@ function ExpandedWorkGroupEntries({
           data-tool-group-scroll
           style={{ maxHeight: `calc(min(18rem, 50dvh) + ${expandedContentHeight}px)` }}
           className={cn(
-            "scrollbar-gutter-stable scroll-py-6 -me-(--chat-lane-reach) overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            "scroll-py-6 overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            // In a card, a reserved gutter pulls the status column out of line with the header.
+            density === "grouped" && "-me-(--chat-lane-reach)",
+            (density === "grouped" || fades.top || fades.bottom) && "scrollbar-gutter-stable",
             getVirtualizedScrollFadeClassName(fades),
           )}
         />
@@ -592,6 +601,50 @@ export function LiveWorkEntryTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "work-live" }>;
 }) {
+  const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
+  // Thoughts show as rows inside the card, so its height never changes as they come and go.
+  const ctx = use(TimelineRowCtx);
+  if (!toolCallCards || !groupHasTools(row.groupedEntries)) return <LiveWorkEntryLine row={row} />;
+  return (
+    <LiveToolCard
+      entries={row.groupedEntries}
+      expanded={row.expanded}
+      onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+    />
+  );
+}
+
+function LiveThoughtLine({ text }: { text: string }) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <WorkLogRow
+      icon={
+        <span className="flex size-4 items-center justify-center text-icon-muted">
+          <ToolActivityIconView
+            icon={undefined}
+            fallbackName="brain"
+            className="block size-4 shrink-0 stroke-2"
+            muted
+          />
+        </span>
+      }
+      label={
+        <span className="line-clamp-4">
+          <ChatMarkdown
+            inline
+            text={text}
+            cwd={ctx.markdownCwd}
+            parseRawHtml={false}
+            extraRemarkPlugins={THOUGHT_PREVIEW_PLUGINS}
+          />
+        </span>
+      }
+      wrapLabel
+    />
+  );
+}
+
+function LiveWorkEntryLine({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
@@ -617,32 +670,7 @@ export function LiveWorkEntryTimelineRow({
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
-      {thoughtLine ? (
-        <WorkLogRow
-          icon={
-            <span className="flex size-4 items-center justify-center text-icon-muted">
-              <ToolActivityIconView
-                icon={undefined}
-                fallbackName="brain"
-                className="block size-4 shrink-0 stroke-2"
-                muted
-              />
-            </span>
-          }
-          label={
-            <span className="line-clamp-4">
-              <ChatMarkdown
-                inline
-                text={thoughtLine}
-                cwd={ctx.markdownCwd}
-                parseRawHtml={false}
-                extraRemarkPlugins={THOUGHT_PREVIEW_PLUGINS}
-              />
-            </span>
-          }
-          wrapLabel
-        />
-      ) : null}
+      {thoughtLine ? <LiveThoughtLine text={thoughtLine} /> : null}
       <LiveActivityRow
         label={
           thoughtIsStatus ? (
@@ -684,6 +712,8 @@ export function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
+  if (toolCallCards && groupHasTools(row.groupedEntries)) return <ToolGroupLine row={row} />;
   return (
     <WorkGroupHeader
       label={row.summary}
@@ -854,16 +884,68 @@ function WorkingWindowText({
   );
 }
 
+type WorkingWindowViewItem =
+  | WorkingWindowItem
+  | { readonly kind: "tool-card"; readonly id: string; readonly entries: TimelineWorkEntry[] };
+
+/** Beta tool call cards: the run's calls and thoughts share one card below its text. */
+function withToolCard(
+  items: ReadonlyArray<WorkingWindowItem>,
+  enabled: boolean,
+): ReadonlyArray<WorkingWindowViewItem> {
+  if (!enabled) return items;
+  const entries: TimelineWorkEntry[] = [];
+  const rest: WorkingWindowViewItem[] = [];
+  for (const item of items) {
+    if (
+      item.kind === "work" &&
+      item.entry.sourceActivityKind !== "context-compaction" &&
+      item.entry.itemType !== "approval_request" &&
+      item.entry.itemType !== "user_input_request" &&
+      (item.entry.itemType === "reasoning" || workLogEntryIsToolLike(item.entry))
+    ) {
+      entries.push(item.entry);
+    } else {
+      rest.push(item);
+    }
+  }
+  return groupHasTools(entries)
+    ? [...rest, { kind: "tool-card", id: "tool-card", entries }]
+    : items;
+}
+
+function WorkingToolCard({ entries }: { entries: TimelineWorkEntry[] }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <>
+      <LiveToolCard
+        entries={entries}
+        expanded={expanded}
+        onToggle={() => setExpanded((open) => !open)}
+      />
+      {expanded ? (
+        <WorkGroupSection
+          anchorKey="working-tool-card"
+          disclosureAnchorKey="working-indicator-row"
+          groupedEntries={entries}
+          isExpandedToolGroup
+        />
+      ) : null}
+    </>
+  );
+}
+
 const WorkingWindowItemView = memo(function WorkingWindowItemView({
   item,
   itemKey,
   current,
 }: {
-  item: WorkingWindowItem;
+  item: WorkingWindowViewItem;
   itemKey: string;
   current: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
+  if (item.kind === "tool-card") return <WorkingToolCard entries={item.entries} />;
   if (item.kind === "text") {
     return <WorkingWindowText item={item} itemKey={itemKey} />;
   }
@@ -909,12 +991,14 @@ function WorkingWindowView({
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree, turnEnded, pendingRequest } =
     use(TimelineRowActivityCtx);
+  const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
+  const items = withToolCard(window.items, toolCallCards);
   const open = window.historyOpen;
   const [history, setHistory] = useState<{ head: number; tailStart: number } | null>(null);
   if (open && history === null) {
     setHistory({
       head: WORKING_HISTORY_BATCH,
-      tailStart: Math.max(0, window.items.length - WORKING_WINDOW_TAIL),
+      tailStart: Math.max(0, items.length - WORKING_WINDOW_TAIL),
     });
   }
   const windowRef = useRef<HTMLDivElement>(null);
@@ -972,19 +1056,20 @@ function WorkingWindowView({
   }))();
   const headEnd = history ? Math.min(history.head, history.tailStart) : 0;
   const unmounted = history ? history.tailStart - headEnd : 0;
-  const shown = history
-    ? window.items.slice(history.tailStart)
-    : window.items.slice(-WORKING_WINDOW_TAIL);
-  const renderItem = (item: WorkingWindowItem) => (
+  const shown = history ? items.slice(history.tailStart) : items.slice(-WORKING_WINDOW_TAIL);
+  const renderItem = (item: WorkingWindowViewItem) => (
     <div key={item.id} className="min-w-0">
-      <WorkingWindowItemView item={item} itemKey={itemKey} current={item === window.items.at(-1)} />
+      <WorkingWindowItemView item={item} itemKey={itemKey} current={item === items.at(-1)} />
     </div>
   );
+  const lastItem = items.at(-1);
   const showThinking =
     !turnEnded &&
     !pendingRequest &&
     !window.answering &&
-    !workingWindowItemIsLive(window.items.at(-1)) &&
+    !(lastItem?.kind === "tool-card"
+      ? lastItem.entries.some((entry) => entry.toolLifecycleStatus === "inProgress")
+      : workingWindowItemIsLive(lastItem)) &&
     !isCompacting &&
     !isPreparingWorktree &&
     !workingWindowHasActiveCompaction(window);
@@ -1007,20 +1092,20 @@ function WorkingWindowView({
         {history === null ? (
           <CollapsedWorkingWindow
             key={window.key}
-            items={window.items}
+            items={items}
             itemKey={itemKey}
             showThinking={showThinking}
             onOverflowChange={onOverflowChange}
           />
         ) : (
           <>
-            {history ? window.items.slice(0, headEnd).map(renderItem) : null}
+            {history ? items.slice(0, headEnd).map(renderItem) : null}
             {unmounted > 0 ? (
               <div
                 ref={spacerRef}
                 aria-hidden
                 className="shrink-0"
-                style={{ height: unmounted * (compactWorkEntryHeight + 4) }}
+                style={{ height: unmounted * (compactWorkEntryHeight.grouped + 4) }}
               />
             ) : null}
             {shown.map(renderItem)}
@@ -1038,7 +1123,7 @@ function CollapsedWorkingWindow({
   showThinking,
   onOverflowChange,
 }: {
-  items: WorkingWindow["items"];
+  items: ReadonlyArray<WorkingWindowViewItem>;
   itemKey: string;
   showThinking: boolean;
   onOverflowChange: (overflows: boolean) => void;
@@ -1128,7 +1213,7 @@ function CollapsedWorkingWindow({
               ref={spacerRef}
               aria-hidden
               className="shrink-0"
-              style={{ height: start * (compactWorkEntryHeight + 4) }}
+              style={{ height: start * (compactWorkEntryHeight.grouped + 4) }}
             />
           ) : null}
           {items.slice(start).map((item) => (
