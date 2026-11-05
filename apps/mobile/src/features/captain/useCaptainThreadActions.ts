@@ -1,14 +1,19 @@
 import { useNavigation } from "@react-navigation/native";
+import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { CaptainMenuActionId } from "@t3tools/client-runtime/state/captainPresentation";
+import {
+  captainMenuState,
+  type CaptainMenuActionId,
+} from "@t3tools/client-runtime/state/captainPresentation";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { captainEnvironment, useCaptainSidebarIndexes } from "../../state/captains";
+import { buildCaptainMenuActions } from "./captain-menu";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 /** Runs the captain items of the thread menu, the same for the title menu and the command palette. */
@@ -72,4 +77,24 @@ export function useCaptainThreadActions() {
         return;
     }
   };
+}
+
+/** The captain items of a thread's title menu for this user, and what runs when one is picked. */
+export function useCaptainTitleMenu(
+  thread: Parameters<typeof captainMenuState>[0] & { readonly environmentId: EnvironmentId },
+  canOperate: boolean,
+) {
+  const run = useCaptainThreadActions();
+  const index = useCaptainSidebarIndexes().get(thread.environmentId);
+  const make = useAtomValue(captainEnvironment.makeCaptain.permissionAtom(thread.environmentId));
+  const release = useAtomValue(
+    captainEnvironment.releaseCaptain.permissionAtom(thread.environmentId),
+  );
+  const update = useAtomValue(
+    captainEnvironment.updateCaptain.permissionAtom(thread.environmentId),
+  );
+  const actions = canOperate
+    ? buildCaptainMenuActions(captainMenuState(thread, index), { make, release, update })
+    : [];
+  return { actions, run };
 }
