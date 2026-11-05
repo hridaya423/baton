@@ -8,6 +8,7 @@ import {
   resolveEnvironmentMachineKind,
   type ServerConfig,
 } from "@t3tools/contracts";
+import { isTailnetHost } from "@t3tools/shared/hostClassification";
 import * as Option from "effect/Option";
 
 import type { EnvironmentPresentation } from "./connection/presentation.ts";
@@ -241,9 +242,17 @@ export function linkRequestDisplay(
   }
 }
 
+/** Whether linking to these addresses needs a pairing code: one on the tailnet may link without. */
+export const linkNeedsPairingCode = (urls: ReadonlyArray<string>): boolean =>
+  !urls.some((url) => {
+    const parsed = URL.parse(url);
+    return parsed !== null && isTailnetHost(parsed.hostname);
+  });
+
 /**
- * Builds the RPC payload for an answer. A link with a blank code returns null,
- * since the server rejects it; callers keep Link disabled instead.
+ * Builds the RPC payload for an answer. A link with a blank code returns null
+ * unless it names a tailnet address, which may link without one; the server
+ * rejects the rest, so callers keep Link disabled instead.
  */
 export function linkRequestAnswerInput(
   item: Pick<LinkRequestItem, "id" | "threadId">,
@@ -263,15 +272,17 @@ export function linkRequestAnswerInput(
   const base = { threadId: item.threadId, turnItemId: item.id };
   if (answer.type !== "link") return { ...base, answer };
   const pairingCode = answer.pairingCode.trim();
-  if (pairingCode.length === 0) return null;
+  const code = pairingCode.length === 0 ? {} : { pairingCode };
   const { target } = answer;
   if ("url" in target) {
     const url = target.url.trim();
-    if (url.length === 0) return null;
-    return { ...base, answer: { type: "link", urls: [url], access: answer.access, pairingCode } };
+    if (url.length === 0 || (pairingCode.length === 0 && linkNeedsPairingCode([url]))) return null;
+    return { ...base, answer: { type: "link", urls: [url], access: answer.access, ...code } };
   }
   const [first, ...rest] = target.urls;
-  if (first === undefined) return null;
+  if (first === undefined || (pairingCode.length === 0 && linkNeedsPairingCode(target.urls))) {
+    return null;
+  }
   return {
     ...base,
     answer: {
@@ -280,7 +291,7 @@ export function linkRequestAnswerInput(
       label: target.label,
       urls: [first, ...rest],
       access: answer.access,
-      pairingCode,
+      ...code,
     },
   };
 }

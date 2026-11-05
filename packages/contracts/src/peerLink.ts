@@ -37,8 +37,12 @@ export const PeerLinkCreateInput = Schema.Struct({
   url: TrimmedNonEmptyString,
   /** More addresses for the same peer, tried after `url`. */
   alternateUrls: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
-  /** A pairing code from the peer (`t3 pair` there, or its Connections settings). */
-  pairingCode: TrimmedNonEmptyString,
+  /**
+   * A pairing code from the peer (`t3 pair` there, or its Connections settings).
+   * A peer on this device's tailnet is tried without one first, so the code only
+   * matters when that fails or the address is not a tailnet one.
+   */
+  pairingCode: Schema.optionalKey(TrimmedNonEmptyString),
   access: AuthMcpClientAccess,
   /**
    * The environment the user means. Addresses that answer as another one are
@@ -91,7 +95,8 @@ export const PeerLinkRequestAnswerInput = Schema.Struct({
       /** The addresses the client knows for that machine, most preferred first. */
       urls: Schema.NonEmptyArray(TrimmedNonEmptyString),
       access: AuthMcpClientAccess,
-      pairingCode: TrimmedNonEmptyString,
+      /** Left out for a tailnet address, which links without one when its owner's tailnet allows. */
+      pairingCode: Schema.optionalKey(TrimmedNonEmptyString),
     }),
     /** Answers with a machine this environment is already linked to, as it is. */
     Schema.Struct({ type: Schema.Literal("use-existing"), environmentId: EnvironmentId }),

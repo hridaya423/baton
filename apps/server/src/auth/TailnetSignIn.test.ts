@@ -3,7 +3,11 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthStandardClientScopes, TAILNET_APP_CAPABILITY } from "@t3tools/contracts";
+import {
+  AuthStandardClientScopes,
+  mcpClientScopes,
+  TAILNET_APP_CAPABILITY,
+} from "@t3tools/contracts";
 import { computeDpopJwkThumbprint, type DpopPublicJwk } from "@t3tools/shared/dpop";
 import { parseTailscaleStatus, parseTailscaleWhois } from "@t3tools/tailscale";
 import { describe, expect, it } from "@effect/vitest";
@@ -331,6 +335,12 @@ const signIn = (key: ReturnType<typeof makeDpopKey>, shape?: RequestShape) =>
     return yield* service.signIn(yield* signInRequest(key, shape));
   });
 
+const authorizePeerLink = (shape?: RequestShape) =>
+  Effect.gen(function* () {
+    const service = yield* TailnetSignIn.TailnetSignIn;
+    return yield* service.authorizePeerLink(yield* signInRequest(makeDpopKey(), shape));
+  });
+
 const exchange = (credential: string, key: ReturnType<typeof makeDpopKey>) =>
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -642,6 +652,67 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCryptoLayer.layer))("TailnetSign
             },
             config,
           ),
+        ),
+      ),
+  );
+
+  it.effect.each<{
+    readonly name: string;
+    readonly request?: RequestShape;
+    readonly status?: JsonObject;
+    readonly node?: JsonObject;
+    readonly capMap?: JsonObject;
+    readonly outcome:
+      | { readonly via: "owner" | "grant"; readonly scopes: ReadonlyArray<string> }
+      | { readonly refused: string };
+  }>([
+    {
+      name: "the owner's own untagged device, which sends no proof",
+      request: { dpop: false },
+      outcome: { via: "owner", scopes: mcpClientScopes(TailnetSignIn.OWN_DEVICE_PEER_LINK_ACCESS) },
+    },
+    {
+      name: "a device the policy grants read-only",
+      node: phoneNode({ User: `int64:${NEIGHBOR_ID}` }),
+      capMap: granted({ scopes: ["read"] }),
+      outcome: { via: "grant", scopes: READ_SCOPES },
+    },
+    {
+      name: "a tagged device",
+      node: phoneNode({ Tags: ["tag:ci"] }),
+      outcome: { refused: "tagged_device" },
+    },
+    {
+      name: "another user's device",
+      node: phoneNode({ User: `int64:${NEIGHBOR_ID}` }),
+      outcome: { refused: "other_user" },
+    },
+    {
+      name: "a caller that is not on the tailnet",
+      request: { remoteAddress: "192.168.1.5" },
+      outcome: { refused: "not_direct_tailnet" },
+    },
+    {
+      name: "a host using userspace networking",
+      status: hostStatus({ TUN: false }),
+      outcome: { refused: "tailscale_unavailable" },
+    },
+  ])(
+    "lets a peer link as $name only as the tailnet allows",
+    ({ request, status, node, capMap, outcome }) =>
+      Effect.gen(function* () {
+        if ("refused" in outcome) {
+          expect(yield* refusalOf(authorizePeerLink(request))).toBe(outcome.refused);
+          return;
+        }
+        expect(yield* authorizePeerLink(request)).toEqual(outcome);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            status: status ?? hostStatus(),
+            node: node ?? phoneNode(),
+            ...(capMap === undefined ? {} : { capMap }),
+          }),
         ),
       ),
   );

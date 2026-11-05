@@ -2,6 +2,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { type ExecutionEnvironmentDescriptor, OrchestratorMcpFailure } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -29,8 +30,10 @@ import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
+  allowTailnetLinks,
   descriptorOf,
   layerLinkingEnvironment,
+  refuseTailnetLinks,
   servePeer,
   type ServedPeer,
 } from "./PeerLinks.testkit.ts";
@@ -199,6 +202,75 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       // A refusal keeps the peer's reason.
       const notFound = yield* probe(a, undefined, "refuse").pipe(Effect.flip);
       expect(notFound).toMatchObject({ code: "thread_not_found", message: "No such thread." });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("links a tailnet peer with no pairing code, and falls back to one when it refuses", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+
+      const needsCode = yield* a.links.link({ url: b.url, access: "auto" }).pipe(Effect.flip);
+      expect(needsCode.message).toContain("needs a pairing code");
+
+      const refused = yield* a.links.link({ url: b.tailnetUrl, access: "auto" }).pipe(Effect.flip);
+      expect(refused.reason).toBe("pairing_rejected");
+      expect(refused.message).toContain("refused (disabled)");
+      expect(refused.message).toContain("A pairing code from Box links it instead");
+      expect(yield* linkedSessions(b)).toEqual([]);
+
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.tailnetUrl, pairingCode: pairing.credential, access: "auto" });
+      expect(yield* linkedSessions(b)).toHaveLength(1);
+
+      yield* allowTailnetLinks(b, "auto");
+      const linked = yield* a.links.link({ url: b.tailnetUrl, access: "auto" });
+      expect(linked).toMatchObject({ environmentId: box.environmentId, urls: [b.tailnetUrl] });
+      expect(Duration.toMillis(DateTime.distance(linked.linkedAt, linked.expiresAt))).toBe(
+        Duration.toMillis(Duration.hours(1)),
+      );
+      expect(yield* linkedSessions(b)).toHaveLength(2);
+      expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("renews a tailnet link before and after its token expires, with no user action", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      yield* allowTailnetLinks(b, "auto");
+      yield* a.links.link({ url: b.tailnetUrl, access: "auto" });
+      yield* Ref.set(b.bearers, []);
+      yield* probe(a);
+      const firstToken = new Set(yield* Ref.get(b.bearers));
+      expect(yield* linkedSessions(b)).toHaveLength(1);
+
+      yield* TestClock.adjust(Duration.minutes(30));
+      yield* probe(a);
+      expect(yield* linkedSessions(b)).toHaveLength(1);
+
+      // Inside the last ten minutes the next call renews first.
+      yield* TestClock.adjust(Duration.minutes(25));
+      yield* Ref.set(b.bearers, []);
+      yield* probe(a);
+      expect(yield* linkedSessions(b)).toHaveLength(2);
+      expect(new Set(yield* Ref.get(b.bearers))).not.toEqual(firstToken);
+
+      // A peer that now refuses leaves the link to expire; it is asked again a minute later.
+      yield* TestClock.adjust(Duration.hours(2));
+      yield* refuseTailnetLinks(b, "blocked");
+      yield* Ref.set(b.bearers, []);
+      const expired = yield* probe(a).pipe(Effect.flip);
+      expect(expired.message).toContain("expired");
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
+
+      yield* allowTailnetLinks(b, "auto");
+      yield* TestClock.adjust(Duration.minutes(2));
+      expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

@@ -5,6 +5,8 @@ import {
   EnvironmentId,
   type AuthMcpClientAccess,
   type ExecutionEnvironmentDescriptor,
+  mcpClientScopes,
+  type TailnetSignInRefusedReason,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,6 +18,7 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
+import { Agent, fetch as undiciFetch } from "undici";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../auth/http.ts";
@@ -23,6 +26,7 @@ import * as McpOAuth from "../auth/McpOAuth.ts";
 import * as McpOAuthHttp from "../auth/mcpOAuthHttp.ts";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as TailnetSignIn from "../auth/TailnetSignIn.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerHttp from "../http.ts";
@@ -37,6 +41,14 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 class PeerTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.metadata)
   .add(EnvironmentHttpApi.groups.mcpOAuth) {}
+
+type TailnetAnswer = Effect.Effect<
+  TailnetSignIn.PeerLinkAuthorization,
+  TailnetSignIn.TailnetSignInRefusedError
+>;
+
+const refusing = (reason: TailnetSignInRefusedReason): TailnetAnswer =>
+  Effect.fail(new TailnetSignIn.TailnetSignInRefusedError({ reason }));
 
 export const descriptorOf = (
   environmentId: string,
@@ -69,6 +81,10 @@ export const servePeer = <E, R>(
     const descriptor = yield* Ref.make(initial);
     const bearers = yield* Ref.make<ReadonlyArray<string>>([]);
     const probes = yield* Ref.make(0);
+    const tailnet = yield* Ref.make<TailnetAnswer>(refusing("disabled"));
+    const layerTailnetSignIn = Layer.mock(TailnetSignIn.TailnetSignIn)({
+      authorizePeerLink: () => Effect.flatten(Ref.get(tailnet)),
+    });
     const layerEnvironment = Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
       getDescriptor: Ref.get(descriptor),
@@ -101,7 +117,11 @@ export const servePeer = <E, R>(
     );
     const layerRoutes = Layer.mergeAll(
       HttpApiBuilder.layer(PeerTestApi).pipe(
-        Layer.provide(McpOAuthHttp.layer.pipe(Layer.provide(McpOAuth.layer))),
+        Layer.provide(
+          McpOAuthHttp.layer.pipe(
+            Layer.provide(McpOAuth.layer.pipe(Layer.provide(layerTailnetSignIn))),
+          ),
+        ),
         Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
         Layer.provide(AuthHttp.layerAuthenticatedAuth),
       ),
@@ -130,6 +150,10 @@ export const servePeer = <E, R>(
     const auth = Context.get(authContext, EnvironmentAuth.EnvironmentAuth);
     return {
       url,
+      /** This peer by a tailnet name, which `layerLinkingEnvironment` carries to it. */
+      tailnetUrl: `http://peer-${address.port}.example.ts.net:${address.port}`,
+      /** Its Tailscale check of whoever links: what they may hold, or why not. */
+      tailnet,
       auth,
       /** Its settings, as for turning its Linked environments beta off. */
       settings: Context.get(authContext, ServerSettings.ServerSettingsService),
@@ -150,6 +174,32 @@ export const servePeer = <E, R>(
 
 export type ServedPeer = Effect.Success<ReturnType<typeof servePeer>>;
 
+const loopbackAgent = new Agent({
+  connect: {
+    lookup: (_hostname, options, callback) =>
+      options.all === true
+        ? callback(null, [{ address: "127.0.0.1", family: 4 }])
+        : callback(null, "127.0.0.1", 4),
+  },
+});
+
+/** Resolves a `*.ts.net` name to loopback, where `servePeer` listens, so it is still reached under that name. */
+const layerTailnetNamesOnLoopback = FetchHttpClient.layer.pipe(
+  Layer.provide(
+    Layer.succeed(FetchHttpClient.Fetch, (input, init) => {
+      const url = URL.parse(input instanceof Request ? input.url : input.toString());
+      if (url === null || !url.hostname.endsWith(".ts.net")) {
+        // @effect-diagnostics-next-line globalFetch:off -- This is the fetch FetchHttpClient calls.
+        return globalThis.fetch(input, init);
+      }
+      return undiciFetch(url, {
+        ...init,
+        dispatcher: loopbackAgent,
+      } as Parameters<typeof undiciFetch>[1]);
+    }),
+  ),
+);
+
 /**
  * The environment that links: its own database and secret store, reaching
  * peers over plain HTTP. Provide it to anything built on its links.
@@ -166,7 +216,7 @@ export const layerLinkingEnvironment = <E = never>(
     Layer.provideMerge(PeerLinks.layer),
     Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
     Layer.provideMerge(database),
-    Layer.provide(Layer.mergeAll(secrets, FetchHttpClient.layer)),
+    Layer.provide(Layer.mergeAll(secrets, layerTailnetNamesOnLoopback)),
     // Services that act for this environment, such as delegation, name it too.
     Layer.provideMerge(
       Layer.succeed(ServerEnvironment.ServerEnvironment, {
@@ -178,6 +228,14 @@ export const layerLinkingEnvironment = <E = never>(
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.fresh,
   );
+
+/** Lets whoever links to `peer` over its tailnet name hold up to `access`. */
+export const allowTailnetLinks = (peer: ServedPeer, access: AuthMcpClientAccess = "full-access") =>
+  Ref.set(peer.tailnet, Effect.succeed({ scopes: mcpClientScopes(access), via: "owner" as const }));
+
+/** Has `peer` refuse tailnet links for `reason`, as it does until they are allowed. */
+export const refuseTailnetLinks = (peer: ServedPeer, reason: TailnetSignInRefusedReason) =>
+  Ref.set(peer.tailnet, refusing(reason));
 
 /** Links `links` to `peer` with a fresh pairing code from it. */
 export const linkTo = (

@@ -3,6 +3,7 @@ import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Argument from "effect/cli/Argument";
@@ -100,7 +101,10 @@ const environmentLinkCommand = Command.make("link", {
     Flag.atLeast(0),
   ),
   pairingCode: Flag.String("pairing-code").pipe(
-    Flag.withDescription("A pairing code from the other environment (`t3 pair` there)."),
+    Flag.withDescription(
+      "A pairing code from the other environment (`t3 pair` there). A Tailscale address links without one when its tailnet allows this device.",
+    ),
+    Flag.optional,
   ),
   access: Flag.Literals("access", AuthMcpClientAccess.literals).pipe(
     Flag.withDescription(
@@ -118,7 +122,10 @@ const environmentLinkCommand = Command.make("link", {
         const linked = yield* links.link({
           url: flags.url,
           alternateUrls: flags.alternateUrl,
-          pairingCode: flags.pairingCode,
+          ...Option.match(flags.pairingCode, {
+            onNone: () => ({}),
+            onSome: (pairingCode) => ({ pairingCode }),
+          }),
           access: flags.access,
         });
         yield* Console.log(

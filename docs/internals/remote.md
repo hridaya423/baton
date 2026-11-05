@@ -71,8 +71,8 @@ revokes it; reordering does not, because the same addresses remain trusted.
 
 A [peer link](../../apps/server/src/peer/PeerLinks.ts) lets one environment's
 agents work in another. The linking environment signs in to the other's `/mcp`
-as an outside MCP client, with a pairing code from it, and keeps that session's
-token in its own secret store. The other environment needs nothing new: it
+as an outside MCP client, with a pairing code from it or, for a tailnet host,
+by Tailscale identity, and keeps that session's token in its own secret store. The other environment needs nothing new: it
 sees one more OAuth client, lists it in Sharing & access, and revokes it there.
 Unlinking on the linking side only forgets the token.
 
@@ -83,6 +83,14 @@ Unlinking on the linking side only forgets the token.
   and can still be cancelled. Off on the receiving side, link registrations are
   refused and link sessions get a 403, which the linking side reports as
   retryable so the task's follower waits rather than failing it.
+- **A tailnet link's session lasts an hour and renews itself.** The receiver
+  runs [`TailnetSignIn`'s checks](../../apps/server/src/auth/TailnetSignIn.ts)
+  (`authorizePeerLink`), then issues an ordinary MCP client session, not a
+  `tailscale:` one, so blocking the device or removing its grant cannot revoke it
+  by subject. The short lifetime bounds that, and `PeerLinks` asks again as the
+  token nears expiry, so a block lands at the next renewal. The caller's `access`
+  is capped by what its grant allows, or full access for the owner's own
+  untagged device.
 - **A tool runs in a linked environment when its parameters take
   `OrchestratorMcpEnvironmentTarget`** as `environmentId`.
   [`McpToolAccess.toLayer`](../../apps/server/src/mcp/McpToolAccess.ts) sends

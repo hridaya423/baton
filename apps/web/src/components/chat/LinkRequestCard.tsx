@@ -2,6 +2,7 @@ import { pipe } from "effect/Function";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type LinkableMachine,
+  linkNeedsPairingCode,
   linkRequestAnswerInput,
   linkRequestDefaultAccess,
   linkRequestDisplay,
@@ -254,7 +255,17 @@ function LinkRequestDialog(props: {
   const current: LinkStep = steps.includes(step) ? step : "access";
   const machineReady =
     target.kind !== "none" && (useExisting || !needsAddress || address.trim().length > 0);
-  const ready = machineReady && (useExisting || canMint || pairingCode.trim().length > 0);
+  const linkUrls =
+    target.kind === "address"
+      ? [address.trim()]
+      : target.kind === "machine"
+        ? needsAddress
+          ? [address.trim()]
+          : target.urls
+        : [];
+  const codeOptional = !linkNeedsPairingCode(linkUrls);
+  const ready =
+    machineReady && (useExisting || canMint || codeOptional || pairingCode.trim().length > 0);
 
   const reset = () => {
     setChoice(null);
@@ -416,6 +427,9 @@ function LinkRequestDialog(props: {
                           spellCheck={false}
                         />
                         <span className="block text-meta text-muted-foreground">
+                          {codeOptional
+                            ? "Optional on a Tailscale address, and used only if Tailscale sign-in is refused. "
+                            : ""}
                           Create a link on {targetName}: Settings → Connections → Create link, then
                           paste its code here.
                         </span>

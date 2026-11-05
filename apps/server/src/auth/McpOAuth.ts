@@ -23,6 +23,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -39,6 +40,7 @@ import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as PayloadSigner from "./PayloadSigner.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import * as TailnetSignIn from "./TailnetSignIn.ts";
 import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
@@ -52,6 +54,8 @@ import { requestUrl } from "../requestUrl.ts";
 
 const SIGNING_SECRET_NAME = "mcp-oauth-signing-key";
 const AUTHORIZATION_CODE_TTL_MS = 60_000;
+// Nothing here revokes an MCP session by tailnet subject, so a block or a lost grant lands when the peer renews.
+const TAILNET_PEER_LINK_SESSION_TTL = Duration.hours(1);
 const MAX_CLIENT_NAME_LENGTH = 100;
 const MAX_REDIRECT_URIS = 5;
 const MAX_REDIRECT_URI_LENGTH = 512;
@@ -189,6 +193,7 @@ interface PendingCode {
   readonly codeChallenge: string;
   readonly resource: string;
   readonly access: AuthMcpClientAccess;
+  readonly tailnet: boolean;
   readonly expiresAtMs: number;
 }
 
@@ -257,6 +262,7 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const digester = yield* Digest.Digest;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const tailnetSignIn = yield* TailnetSignIn.TailnetSignIn;
   const linksEnabled = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
@@ -425,6 +431,7 @@ const make = Effect.gen(function* () {
   const mintCode = Effect.fn("McpOAuth.mintCode")(function* (
     authorization: AuthorizationRequest,
     access: AuthMcpClientAccess,
+    tailnet: boolean,
   ) {
     const now = yield* Clock.currentTimeMillis;
     const code = Buffer.from(yield* random.randomBytes(32)).toString("base64url");
@@ -438,6 +445,7 @@ const make = Effect.gen(function* () {
         codeChallenge: authorization.codeChallenge,
         resource: authorization.resource,
         access,
+        tailnet,
         expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
       });
       return next;
@@ -461,6 +469,20 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+    } else if (decision._tag === "tailnet") {
+      if (!input.authorization.client.peerLink) {
+        return yield* new McpOAuthPageError({
+          description: "Only another T3 Code environment can link over the tailnet.",
+        });
+      }
+      const linked = yield* tailnetSignIn
+        .authorizePeerLink(input.request)
+        .pipe(Effect.mapError((error) => new McpOAuthPageError({ description: error.message })));
+      if (!mcpClientScopes(decision.access).every((scope) => linked.scopes.includes(scope))) {
+        return yield* new McpOAuthPageError({
+          description: `This device's tailnet access does not cover ${decision.access}. Link with less, or grant it more in the tailnet policy.`,
+        });
+      }
     } else {
       const session = yield* approvingBrowserSession(input.request, input.authorization);
       if (
@@ -473,7 +495,7 @@ const make = Effect.gen(function* () {
         });
       }
     }
-    const code = yield* mintCode(input.authorization, decision.access);
+    const code = yield* mintCode(input.authorization, decision.access, decision._tag === "tailnet");
     yield* Effect.logInfo("Approved an MCP client sign-in.", {
       client: input.authorization.client.name,
       access: decision.access,
@@ -538,6 +560,7 @@ const make = Effect.gen(function* () {
           access: pending.access,
           peerLink: pending.peerLink,
           client: deriveAuthClientMetadata({ request }),
+          ...(pending.tailnet ? { ttl: TAILNET_PEER_LINK_SESSION_TTL } : {}),
         })
         .pipe(
           Effect.catch((cause) =>

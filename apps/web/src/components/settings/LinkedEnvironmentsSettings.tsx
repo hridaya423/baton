@@ -1,6 +1,9 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
-import { linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
+import {
+  linkNeedsPairingCode,
+  linkRequestFailureMessage,
+} from "@t3tools/client-runtime/link-request";
 import {
   AuthAccessWriteScope,
   type AuthMcpClientAccess,
@@ -200,10 +203,13 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
   const canMint =
     targetId !== null && Option.isSome(connected) && mayMint && !mintFailed.has(targetId);
   const needsAddress = selected === ANOTHER_ADDRESS || machine?.urls.length === 0;
+  const codeOptional = !linkNeedsPairingCode(
+    machine === null || needsAddress ? [address.trim()] : machine.urls,
+  );
   const ready =
     selected !== null &&
     (!needsAddress || address.trim().length > 0) &&
-    (canMint || pairingCode.trim().length > 0);
+    (canMint || codeOptional || pairingCode.trim().length > 0);
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) {
@@ -241,7 +247,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
               ...(machine === null
                 ? {}
                 : { expectedEnvironmentId: machine.environmentId, expectedLabel: machine.label }),
-              pairingCode: code,
+              ...(code === "" ? {} : { pairingCode: code }),
               access,
             },
           });
@@ -344,6 +350,9 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                 />
                 {machine !== null ? (
                   <span className="block text-meta text-muted-foreground">
+                    {codeOptional
+                      ? "Optional on a Tailscale address, and used only if Tailscale sign-in is refused. "
+                      : ""}
                     Create a link on {machine.label}: Settings → Connections → Create link, then
                     paste its code here.
                   </span>

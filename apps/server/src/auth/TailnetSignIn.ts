@@ -1,8 +1,10 @@
 import {
   type AuthEnvironmentScope,
+  type AuthMcpClientAccess,
   type AuthSessionId,
   type AuthTailnetSignInResult,
   AuthStandardClientScopes,
+  mcpClientScopes,
   TAILNET_SUBJECT_PREFIX,
   TailnetAccessError,
   type TailnetDevice,
@@ -53,6 +55,12 @@ const FAILED_SCAN_TTL = Duration.seconds(10);
 const LOOKUP_GRACE = Duration.minutes(2);
 /** In the state dir. While it exists, only devices with a T3 Code grant sign in. */
 export const REQUIRE_GRANT_FILE = "tailscale-require-grant";
+/**
+ * What the owner's own untagged device may link at. Tailscale already proved it is theirs,
+ * so a pairing code would prove the same; the cost is that a compromised device links at
+ * full access. A tailnet grant sets a lower ceiling, and a peer may ask for less.
+ */
+export const OWN_DEVICE_PEER_LINK_ACCESS: AuthMcpClientAccess = "full-access";
 
 export class TailnetSignInRefusedError extends Schema.TaggedError<TailnetSignInRefusedError>()(
   "TailnetSignInRefusedError",
@@ -77,6 +85,12 @@ export class TailnetDeviceBlockLookupError extends Schema.TaggedError<TailnetDev
   }
 }
 
+export interface PeerLinkAuthorization {
+  /** The most a link from this device may hold. */
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly via: "grant" | "owner";
+}
+
 export class TailnetSignIn extends Context.Service<
   TailnetSignIn,
   {
@@ -94,6 +108,16 @@ export class TailnetSignIn extends Context.Service<
       | EnvironmentAuth.ServerAuthInvalidCredentialError
       | EnvironmentAuth.ServerAuthInternalError
       | ManagedLimits.ManagedPolicyRefusedError
+    >;
+    /**
+     * Runs sign-in's checks for a peer environment linking without a pairing code, and
+     * names the scopes it may link with. Nothing is issued: the caller issues the session.
+     */
+    readonly authorizePeerLink: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<
+      PeerLinkAuthorization,
+      TailnetSignInRefusedError | TailnetDeviceBlockLookupError
     >;
     /** `currentSubject` is the asking session's, which marks that device `current`. */
     readonly listDevices: (
@@ -411,141 +435,149 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const signIn: TailnetSignIn["Service"]["signIn"] = Effect.fn("TailnetSignIn.signIn")(
-    function* (request) {
-      if (config.tailscaleSignInEnabled !== true) return yield* refuse("disabled");
-      // A hard 403: production CORS allows any origin and the `dpop` header.
-      if (!isTrustedOrigin(request.headers.origin)) return yield* refuse("browser_request");
+  /** Every check a Tailscale sign-in makes. `verifyProof` runs where the caller's key is checked. */
+  const admit = Effect.fn("TailnetSignIn.admit")(function* <A, E, R>(
+    request: HttpServerRequest.HttpServerRequest,
+    verifyProof: Effect.Effect<A, E, R>,
+  ) {
+    if (config.tailscaleSignInEnabled !== true) return yield* refuse("disabled");
+    // A hard 403: production CORS allows any origin and the `dpop` header.
+    if (!isTrustedOrigin(request.headers.origin)) return yield* refuse("browser_request");
 
-      const socket = requestSocket(request);
-      const remoteAddress = plainIpv4(socket.remoteAddress);
-      const localAddress = plainIpv4(socket.localAddress);
-      const localPort = socket.localPort;
-      if (localPort === undefined) return yield* refuse("browser_request");
-      if (
-        remoteAddress === undefined ||
-        localAddress === undefined ||
-        !isTailscaleIpv4Address(remoteAddress) ||
-        !isTailscaleIpv4Address(localAddress)
-      ) {
-        return yield* refuse("not_direct_tailnet");
-      }
-      const hostRefusal = (status: TailscaleStatus): TailnetSignInRefusedReason | null =>
-        status.backendState !== "Running" || status.userspaceNetworking === true
-          ? "tailscale_unavailable"
-          : !TailscaleHost.isSupportedTailscaleVersion(status.version)
-            ? "tailscale_outdated"
-            : !isOwnHost(request.headers.host, status, localPort)
-              ? "browser_request"
-              : !status.tailnetIpv4Addresses.includes(localAddress)
-                ? "not_direct_tailnet"
-                : null;
-      // The per-address whois limit comes first, so a request over it costs no proof check,
-      // and only one under it with a valid proof reads `tailscale status`.
-      // A missing required field fails the parse, so it refuses like an unreachable daemon.
-      const node = yield* host
-        .whois(remoteAddress)
-        .pipe(
-          Effect.catch((cause) =>
-            refuse(
-              cause._tag === "TailscaleWhoisRateLimitedError"
-                ? "rate_limited"
-                : "tailscale_unavailable",
-              cause,
-            ),
+    const socket = requestSocket(request);
+    const remoteAddress = plainIpv4(socket.remoteAddress);
+    const localAddress = plainIpv4(socket.localAddress);
+    const localPort = socket.localPort;
+    if (localPort === undefined) return yield* refuse("browser_request");
+    if (
+      remoteAddress === undefined ||
+      localAddress === undefined ||
+      !isTailscaleIpv4Address(remoteAddress) ||
+      !isTailscaleIpv4Address(localAddress)
+    ) {
+      return yield* refuse("not_direct_tailnet");
+    }
+    const hostRefusal = (status: TailscaleStatus): TailnetSignInRefusedReason | null =>
+      status.backendState !== "Running" || status.userspaceNetworking === true
+        ? "tailscale_unavailable"
+        : !TailscaleHost.isSupportedTailscaleVersion(status.version)
+          ? "tailscale_outdated"
+          : !isOwnHost(request.headers.host, status, localPort)
+            ? "browser_request"
+            : !status.tailnetIpv4Addresses.includes(localAddress)
+              ? "not_direct_tailnet"
+              : null;
+    // The per-address whois limit comes first, so a request over it costs no proof check,
+    // and only one under it with a valid proof reads `tailscale status`.
+    // A missing required field fails the parse, so it refuses like an unreachable daemon.
+    const node = yield* host
+      .whois(remoteAddress)
+      .pipe(
+        Effect.catch((cause) =>
+          refuse(
+            cause._tag === "TailscaleWhoisRateLimitedError"
+              ? "rate_limited"
+              : "tailscale_unavailable",
+            cause,
           ),
-        );
-      const proofKeyThumbprint = yield* verifyRequestDpopProof({ request }).pipe(
-        Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
-        Effect.provideService(Digest.Digest, digest),
+        ),
       );
-      // Even if a check below refuses this sign-in, the grant it saw may be this account's.
-      if (tailnetGrantScopes(node.capabilities) !== null) yield* doubtNoGrants;
-      // Decided on a status read now, as one kept from before an account switch names the
-      // old tailnet's policy and owner. A switch also moves this host's tailnet address, so a
-      // request that arrived on the old one fails the address check below.
-      const status = yield* host.freshStatus.pipe(
+    const proof = yield* verifyProof;
+    // Even if a check below refuses this sign-in, the grant it saw may be this account's.
+    if (tailnetGrantScopes(node.capabilities) !== null) yield* doubtNoGrants;
+    // Decided on a status read now, as one kept from before an account switch names the
+    // old tailnet's policy and owner. A switch also moves this host's tailnet address, so a
+    // request that arrived on the old one fails the address check below.
+    const status = yield* host.freshStatus.pipe(
+      Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
+    );
+    const refusal = hostRefusal(status);
+    if (refusal !== null) return yield* refuse(refusal);
+    // The caller must be the peer a status names at its address, as the recheck asks, with a
+    // live key and the tags its lookup saw: a whois answered before an account switch or a
+    // tag change is not judged as the device it no longer is.
+    const checkCaller = (current: TailscaleStatus) => {
+      if (node.stableNodeId === current.selfNodeId) return Effect.void;
+      const peer = current.peers.find(
+        (candidate) =>
+          candidate.stableNodeId === node.stableNodeId &&
+          candidate.tailnetIpv4Addresses.includes(remoteAddress),
+      );
+      if (peer === undefined) return refuse("tailscale_unavailable");
+      // Off the tailnet until it logs in to Tailscale again, which only the device can do.
+      if (peer.keyExpired) return refuse("not_direct_tailnet", "node key expired");
+      return sameTags(peer.tags, node.tags) && (peer.userId === null || peer.userId === node.userId)
+        ? Effect.void
+        : refuse("tailscale_unavailable", "device changed during sign-in");
+    };
+    yield* checkCaller(status);
+    const decision = yield* decide(node, status);
+    // The policy names this device, so it decides here now, even when the grant is refused
+    // as unusable; owner-rule sessions end on the recheck this starts.
+    if (tailnetGrantScopes(node.capabilities) !== null && (yield* countGrant(status.selfNodeId))) {
+      yield* recheckSessions.pipe(Effect.forkDetach);
+    }
+    const isBlocked = blocks
+      .isBlocked({ stableNodeId: node.stableNodeId })
+      .pipe(Effect.mapError((cause) => new TailnetDeviceBlockLookupError({ cause })));
+    // Checked before any refusal, as a grant it suggests would not let a blocked device in.
+    if (yield* isBlocked) return yield* refuse("blocked");
+    const refuseWithGrant = (reason: TailnetSignInRefusedReason, cause?: unknown) =>
+      refuse(
+        reason,
+        cause,
+        GRANT_FIXES.has(reason)
+          ? // This device on this machine only: a login or tag would cover others too.
+            tailnetGrantSnippet(
+              remoteAddress,
+              localAddress,
+              localPort,
+              `${label(node, status) ?? remoteAddress} on ${status.magicDnsName?.split(".")[0] ?? localAddress}; remove when either leaves the tailnet, as addresses get reused`,
+            )
+          : undefined,
+      );
+    if (decision._tag === "Refused") return yield* refuseWithGrant(decision.reason);
+    const { scopes, via } = decision;
+    // The owner rule may have waited on a policy scan, during which the device, this host,
+    // its owner, or the require-grant setting may have changed.
+    if (via === "owner") {
+      const final = yield* host.freshStatus.pipe(
         Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
       );
-      const refusal = hostRefusal(status);
-      if (refusal !== null) return yield* refuse(refusal);
-      // The caller must be the peer a status names at its address, as the recheck asks, with a
-      // live key and the tags its lookup saw: a whois answered before an account switch or a
-      // tag change is not judged as the device it no longer is.
-      const checkCaller = (current: TailscaleStatus) => {
-        if (node.stableNodeId === current.selfNodeId) return Effect.void;
-        const peer = current.peers.find(
-          (candidate) =>
-            candidate.stableNodeId === node.stableNodeId &&
-            candidate.tailnetIpv4Addresses.includes(remoteAddress),
-        );
-        if (peer === undefined) return refuse("tailscale_unavailable");
-        // Off the tailnet until it logs in to Tailscale again, which only the device can do.
-        if (peer.keyExpired) return refuse("not_direct_tailnet", "node key expired");
-        return sameTags(peer.tags, node.tags) &&
-          (peer.userId === null || peer.userId === node.userId)
-          ? Effect.void
-          : refuse("tailscale_unavailable", "device changed during sign-in");
-      };
-      yield* checkCaller(status);
-      const decision = yield* decide(node, status);
-      // The policy names this device, so it decides here now, even when the grant is refused
-      // as unusable; owner-rule sessions end on the recheck this starts.
-      if (
-        tailnetGrantScopes(node.capabilities) !== null &&
-        (yield* countGrant(status.selfNodeId))
-      ) {
-        yield* recheckSessions.pipe(Effect.forkDetach);
-      }
-      const isBlocked = blocks
-        .isBlocked({ stableNodeId: node.stableNodeId })
-        .pipe(Effect.mapError((cause) => new TailnetDeviceBlockLookupError({ cause })));
-      // Checked before any refusal, as a grant it suggests would not let a blocked device in.
+      const finalRefusal = hostRefusal(final);
+      if (finalRefusal !== null) return yield* refuse(finalRefusal);
+      // A block that landed meanwhile answers first, as no grant would let the device in.
       if (yield* isBlocked) return yield* refuse("blocked");
-      const refuseWithGrant = (reason: TailnetSignInRefusedReason, cause?: unknown) =>
-        refuse(
-          reason,
-          cause,
-          GRANT_FIXES.has(reason)
-            ? // This device on this machine only: a login or tag would cover others too.
-              tailnetGrantSnippet(
-                remoteAddress,
-                localAddress,
-                localPort,
-                `${label(node, status) ?? remoteAddress} on ${status.magicDnsName?.split(".")[0] ?? localAddress}; remove when either leaves the tailnet, as addresses get reused`,
-              )
-            : undefined,
-        );
-      if (decision._tag === "Refused") return yield* refuseWithGrant(decision.reason);
-      const { scopes, via } = decision;
-      // The owner rule may have waited on a policy scan, during which the device, this host,
-      // its owner, or the require-grant setting may have changed.
-      if (via === "owner") {
-        const final = yield* host.freshStatus.pipe(
-          Effect.catch((cause) => refuse("tailscale_unavailable", cause)),
-        );
-        const finalRefusal = hostRefusal(final);
-        if (finalRefusal !== null) return yield* refuse(finalRefusal);
-        // A block that landed meanwhile answers first, as no grant would let the device in.
-        if (yield* isBlocked) return yield* refuse("blocked");
-        yield* checkCaller(final);
-        if (
-          final.selfNodeId !== status.selfNodeId ||
-          TailscaleHost.tailnetOwnerUserId(final, config.tailscaleOwnerUserId) !==
-            TailscaleHost.tailnetOwnerUserId(status, config.tailscaleOwnerUserId)
-        ) {
-          return yield* refuseWithGrant("policy_unknown", "this host changed during sign-in");
-        }
-        if (yield* fs.exists(requireGrantPath).pipe(Effect.orElseSucceed(() => true))) {
-          return yield* refuseWithGrant("no_grant");
-        }
+      yield* checkCaller(final);
+      if (
+        final.selfNodeId !== status.selfNodeId ||
+        TailscaleHost.tailnetOwnerUserId(final, config.tailscaleOwnerUserId) !==
+          TailscaleHost.tailnetOwnerUserId(status, config.tailscaleOwnerUserId)
+      ) {
+        return yield* refuseWithGrant("policy_unknown", "this host changed during sign-in");
       }
+      if (yield* fs.exists(requireGrantPath).pipe(Effect.orElseSucceed(() => true))) {
+        return yield* refuseWithGrant("no_grant");
+      }
+    }
 
-      knownUsers.set(node.stableNodeId, node.loginName ?? node.userId);
+    knownUsers.set(node.stableNodeId, node.loginName ?? node.userId);
+    return { node, status, scopes, via, proof, isBlocked };
+  });
+
+  const signIn: TailnetSignIn["Service"]["signIn"] = Effect.fn("TailnetSignIn.signIn")(
+    function* (request) {
+      const { node, status, scopes, via, proof, isBlocked } = yield* admit(
+        request,
+        verifyRequestDpopProof({ request }).pipe(
+          Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
+          Effect.provideService(Digest.Digest, digest),
+        ),
+      );
       const deviceLabel = label(node, status);
       const issued = yield* environmentAuth.createPairingLink({
         subject: tailnetSubject(node.stableNodeId),
-        proofKeyThumbprint,
+        proofKeyThumbprint: proof,
         ttl: GRANT_TTL,
         scopes,
         ...(deviceLabel === null ? {} : { label: deviceLabel }),
@@ -569,6 +601,22 @@ export const make = Effect.gen(function* () {
       return { credential: issued.credential, expiresAt: issued.expiresAt };
     },
   );
+
+  const authorizePeerLink: TailnetSignIn["Service"]["authorizePeerLink"] = Effect.fn(
+    "TailnetSignIn.authorizePeerLink",
+  )(function* (request) {
+    const { node, scopes, via } = yield* admit(request, Effect.void);
+    const ceiling = via === "grant" ? scopes : mcpClientScopes(OWN_DEVICE_PEER_LINK_ACCESS);
+    yield* Effect.logInfo("Tailscale peer link.").pipe(
+      Effect.annotateLogs({
+        device: node.computedName ?? node.stableNodeId,
+        user: node.loginName ?? node.userId,
+        via,
+        scopes: ceiling.join(" "),
+      }),
+    );
+    return { scopes: ceiling, via } satisfies PeerLinkAuthorization;
+  });
 
   const lookupFailingSince = new Map<string, number>();
   // Who each signed-in device belongs to, so a revocation log names the user after Tailscale forgets it.
@@ -894,7 +942,14 @@ export const make = Effect.gen(function* () {
     );
   }
 
-  return TailnetSignIn.of({ signIn, listDevices, blockDevice, unblockDevice, recheckSessions });
+  return TailnetSignIn.of({
+    signIn,
+    authorizePeerLink,
+    listDevices,
+    blockDevice,
+    unblockDevice,
+    recheckSessions,
+  });
 });
 
 export const layer = Layer.effect(TailnetSignIn, make).pipe(

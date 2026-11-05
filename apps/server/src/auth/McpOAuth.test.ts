@@ -5,6 +5,7 @@ import {
   AuthStandardClientScopes,
   type AuthCreatePairingCredentialInput,
   EnvironmentHttpApi,
+  MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -28,6 +29,7 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import * as McpOAuthHttp from "./mcpOAuthHttp.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import * as TailnetSignIn from "./TailnetSignIn.ts";
 import * as AuthHttp from "./http.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -43,6 +45,15 @@ const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
 );
+// The caller's tailnet access comes from a header, so each request names who Tailscale says it is.
+const layerTailnetSignIn = Layer.mock(TailnetSignIn.TailnetSignIn)({
+  authorizePeerLink: (request) =>
+    request.headers["x-test-tailnet"] === "own"
+      ? Effect.succeed({ scopes: mcpClientScopes("full-access"), via: "owner" as const })
+      : request.headers["x-test-tailnet"] === "read"
+        ? Effect.succeed({ scopes: mcpClientScopes("read-only"), via: "grant" as const })
+        : Effect.fail(new TailnetSignIn.TailnetSignInRefusedError({ reason: "no_grant" })),
+});
 const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void) =>
   Layer.mergeAll(
     Layer.effectDiscard(
@@ -52,8 +63,8 @@ const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Servic
       Layer.provide(AuthHttp.layer),
       Layer.provide(
         McpOAuthHttp.layer.pipe(
-          Layer.provide(McpOAuth.layer),
-          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(McpOAuth.layer.pipe(Layer.provide(layerTailnetSignIn))),
+          Layer.provide(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
         ),
       ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
@@ -316,6 +327,91 @@ it.live("signs in with a pairing code and issues a token only /mcp accepts", () 
         }),
       );
       expect(ticket.status).toBe(401);
+    }),
+  ),
+);
+
+it.live("links a peer by Tailscale identity for the access its tailnet allows, for an hour", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const peerRedirect = "http://127.0.0.1/t3code-peer-link";
+      const registerClient = (software_id?: string) =>
+        handler(
+          at("/oauth/mcp/register", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: encodeJson({
+              client_name: "T3 Code · laptop",
+              redirect_uris: [peerRedirect],
+              ...(software_id === undefined ? {} : { software_id }),
+            }),
+          }),
+        ).pipe(Effect.flatMap((response) => json<{ client_id: string }>(response)));
+      const peerClient = (yield* registerClient(MCP_PEER_LINK_SOFTWARE_ID)).client_id;
+      const params = authorizeParams(peerClient, peerRedirect);
+      const decideAs = (
+        authorization: Record<string, string>,
+        tailnet: string,
+        access: AuthMcpClientAccess,
+      ) =>
+        handler(
+          at("/oauth/mcp/decision", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-test-tailnet": tailnet },
+            body: encodeJson({ authorization, decision: { _tag: "tailnet", access } }),
+          }),
+        ).pipe(
+          Effect.flatMap((response) =>
+            json<{ redirectTo?: string; message?: string }>(response).pipe(
+              Effect.map((payload) => ({ status: response.status, ...payload })),
+            ),
+          ),
+        );
+
+      const refused = yield* decideAs(params, "none", "auto");
+      expect(refused.status).toBe(400);
+      expect(refused.message).toContain("no_grant");
+
+      const tooMuch = yield* decideAs(params, "read", "auto");
+      expect(tooMuch.status).toBe(400);
+      expect(tooMuch.message).toContain("tailnet access does not cover auto");
+
+      const otherClient = yield* registerClient();
+      const notAPeer = yield* decideAs(
+        authorizeParams(otherClient.client_id, peerRedirect),
+        "own",
+        "auto",
+      );
+      expect(notAPeer.status).toBe(400);
+      expect(notAPeer.message).toContain("Only another T3 Code environment");
+
+      const approved = yield* decideAs(params, "own", "full-access");
+      expect(approved.status).toBe(200);
+      const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+      const tokenResponse = yield* handler(
+        at(
+          "/oauth/mcp/token",
+          form({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: peerRedirect,
+            client_id: peerClient,
+            code_verifier: verifier,
+            resource: `${ORIGIN}/mcp`,
+          }),
+        ),
+      );
+      const token = (yield* json<unknown>(tokenResponse)) as {
+        access_token: string;
+        expires_in: number;
+      };
+      expect(token.expires_in).toBe(3600);
+      const client = yield* auth.authenticateMcpClient(
+        HttpServerRequest.fromWeb(
+          at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
+        ),
+      );
+      expect(client).toMatchObject({ access: "full-access", peerLink: true });
     }),
   ),
 );

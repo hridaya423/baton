@@ -1,4 +1,5 @@
 import {
+  type AuthMcpApprovalDecision,
   AuthMcpClientAccess,
   AuthMcpRegistrationError,
   AuthMcpTokenError,
@@ -12,6 +13,7 @@ import {
   type PeerLinkSummary,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -25,6 +27,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -50,6 +53,15 @@ const LINK_REDIRECT_URI = "http://127.0.0.1/t3code-peer-link";
 const probeTimeout = (origin: string) =>
   isLocalLoopbackHost(new URL(origin).hostname) ? Duration.seconds(3) : Duration.seconds(10);
 
+/** A tailnet link's token lasts an hour, so it renews a little ahead of that. */
+const RENEW_WINDOW = Duration.minutes(10);
+const RENEW_RETRY = Duration.minutes(1);
+
+type PeerSignInDecision = Extract<
+  AuthMcpApprovalDecision,
+  { readonly _tag: "pairing-code" | "tailnet" }
+>;
+
 /** A usable link: where to reach the peer and the token to send there. */
 export interface ResolvedPeerLink {
   readonly link: PeerLink;
@@ -62,9 +74,8 @@ export const LINKED_ENVIRONMENTS_OFF =
   "Linked environments is off on this machine. Turn it on in Settings → Labs.";
 
 /**
- * Links from this environment to others. Linking signs this environment in to
- * the peer's `/mcp` as an outside agent with a pairing code from the peer, the
- * same MCP OAuth flow an outside agent uses, without a browser. The peer's
+ * Links from this environment to others: it signs in to the peer's `/mcp` as an outside agent,
+ * by Tailscale identity for a tailnet host that allows it, else with a pairing code. The
  * session token is kept in the server secret store; the table keeps the rest.
  */
 export class PeerLinks extends Context.Service<
@@ -163,6 +174,8 @@ const peerOrigin = (url: string) => {
   return Effect.succeed(parsed.origin);
 };
 
+const isTailnetOrigin = (origin: string) => isTailnetHost(new URL(origin).hostname);
+
 /** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
 const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
   peer.capabilities.mcpModeLimitHeader === true && peer.capabilities.linkFence === true;
@@ -233,9 +246,9 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => Option.fromNullishOr(rows[0])),
     );
 
-  /** Signs in to the peer's `/mcp` with a pairing code: register, decide, exchange. */
+  /** Signs in to the peer's `/mcp`: register, decide, exchange. */
   const signIn = Effect.fn("PeerLinks.signIn")(
-    function* (origin: string, input: PeerLinkCreateInput, clientName: string) {
+    function* (origin: string, decision: PeerSignInDecision, clientName: string) {
       const client = yield* clientFor(origin);
       // Only the peer's own refusals are rejections. A dropped connection or
       // an answer this version cannot read is classified below.
@@ -276,7 +289,7 @@ const make = Effect.gen(function* () {
               state: Redacted.make(state),
               resource,
             },
-            decision: { _tag: "pairing-code", access: input.access, code: input.pairingCode },
+            decision,
           },
         })
         .pipe(
@@ -300,7 +313,9 @@ const make = Effect.gen(function* () {
           reason: "pairing_rejected",
           message:
             redirect.searchParams.get("error_description") ??
-            "The peer did not approve the link. Check the pairing code and try again.",
+            (decision._tag === "tailnet"
+              ? "The peer did not approve the link."
+              : "The peer did not approve the link. Check the pairing code and try again."),
         });
       }
       return yield* client.mcpOAuth
@@ -349,6 +364,47 @@ const make = Effect.gen(function* () {
         }),
       ),
   );
+
+  /**
+   * A peer on this device's tailnet is asked by Tailscale identity first, so no code is
+   * needed; a refusal falls back to the pairing code when there is one.
+   */
+  const signInToPeer = Effect.fn("PeerLinks.signInToPeer")(function* (
+    origin: string,
+    input: Pick<PeerLinkCreateInput, "access" | "pairingCode">,
+    peerLabel: string,
+    clientName: string,
+  ) {
+    const { access, pairingCode } = input;
+    const withCode = (code: string) =>
+      signIn(origin, { _tag: "pairing-code", access, code }, clientName);
+    if (!isTailnetOrigin(origin)) {
+      return yield* pairingCode === undefined
+        ? new PeerLinkError({
+            reason: "pairing_rejected",
+            message: `${peerLabel} is not on your tailnet, so linking it needs a pairing code from it.`,
+          })
+        : withCode(pairingCode);
+    }
+    return yield* signIn(origin, { _tag: "tailnet", access }, clientName).pipe(
+      Effect.catch((error) =>
+        pairingCode === undefined
+          ? Effect.fail(
+              error.reason === "pairing_rejected"
+                ? new PeerLinkError({
+                    reason: error.reason,
+                    message: `${error.message} A pairing code from ${peerLabel} links it instead.`,
+                  })
+                : error,
+            )
+          : Effect.logInfo("The tailnet link was refused; using the pairing code.", {
+              origin,
+              reason: error.reason,
+              message: error.message,
+            }).pipe(Effect.andThen(withCode(pairingCode))),
+      ),
+    );
+  });
 
   /**
    * The addresses that answer as `environmentId`, in the order given, with
@@ -436,7 +492,7 @@ const make = Effect.gen(function* () {
         message: `${peer.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
       });
     }
-    const issued = yield* signIn(primary, input, `T3 Code · ${self.label}`);
+    const issued = yield* signInToPeer(primary, input, peer.label, `T3 Code · ${self.label}`);
     const now = yield* DateTime.now;
     const linked: PeerLink = {
       environmentId: peer.environmentId,
@@ -525,9 +581,62 @@ const make = Effect.gen(function* () {
     return { ...(yield* withLabel(link, label)), status: "reachable" };
   });
 
+  const renewal = yield* Semaphore.make(1);
+  const renewalTried = new Map<string, number>();
+
+  /** A tailnet peer's link whose token is near expiry or past it. */
+  const renewable = (link: PeerLink, now: DateTime.Utc) =>
+    link.urls.some(isTailnetOrigin) &&
+    DateTime.isLessThanOrEqualTo(link.expiresAt, DateTime.addDuration(now, RENEW_WINDOW));
+
+  /**
+   * A link to a tailnet peer renews itself by asking again, as it was made, once its token is
+   * near expiry or past it. A peer that now refuses leaves the link to expire as before.
+   */
+  const renewIfDue = Effect.fn("PeerLinks.renewIfDue")(function* (environmentId: EnvironmentId) {
+    yield* renewal.withPermits(1)(
+      Effect.gen(function* () {
+        const row = yield* readRow(environmentId);
+        if (Option.isNone(row)) return;
+        const current = yield* toLink(row.value);
+        const now = yield* DateTime.now;
+        const [first, ...rest] = current.urls;
+        if (first === undefined || !renewable(current, now)) return;
+        const nowMs = yield* Clock.currentTimeMillis;
+        const tried = renewalTried.get(environmentId);
+        if (tried !== undefined && nowMs - tried < Duration.toMillis(RENEW_RETRY)) return;
+        renewalTried.set(environmentId, nowMs);
+        yield* link({
+          url: first,
+          alternateUrls: rest,
+          access: current.access,
+          expectedEnvironmentId: environmentId,
+          expectedLabel: current.label,
+        });
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logInfo("Could not renew the link to a tailnet peer.", {
+            environmentId,
+            reason: error.reason,
+            message: error.message,
+          }),
+        ),
+      ),
+    );
+  });
+
   const list: PeerLinks["Service"]["list"] = Effect.gen(function* () {
-    const links = yield* Effect.forEach(yield* readRows, toLink);
     const now = yield* DateTime.now;
+    const read = Effect.flatMap(readRows, (rows) => Effect.forEach(rows, toLink));
+    let links = yield* read;
+    const due = links.filter((link) => renewable(link, now));
+    if (due.length > 0) {
+      yield* Effect.forEach(due, (link) => renewIfDue(link.environmentId), {
+        concurrency: "unbounded",
+        discard: true,
+      });
+      links = yield* read;
+    }
     return yield* Effect.forEach(links, (link) => statusOf(link, now), {
       concurrency: "unbounded",
     });
@@ -558,6 +667,7 @@ const make = Effect.gen(function* () {
 
   const resolve: PeerLinks["Service"]["resolve"] = Effect.fn("PeerLinks.resolve")(
     function* (environmentId) {
+      yield* renewIfDue(environmentId);
       const row = yield* readRow(environmentId);
       if (Option.isNone(row)) {
         return yield* new PeerLinkError({

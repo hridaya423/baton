@@ -2,6 +2,7 @@ import { pipe } from "effect/Function";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type LinkableMachine,
+  linkNeedsPairingCode,
   linkRequestAnswerInput,
   linkRequestDefaultAccess,
   linkRequestDisplay,
@@ -262,10 +263,20 @@ function LinkRequestSheet(props: {
   const needsAddress =
     target.kind === "address" || (target.kind === "machine" && target.urls.length === 0);
   const useExisting = target.kind === "machine" && target.linked;
+  const linkUrls =
+    target.kind === "address"
+      ? [address.trim()]
+      : target.kind === "machine"
+        ? needsAddress
+          ? [address.trim()]
+          : target.urls
+        : [];
+  const codeOptional = !linkNeedsPairingCode(linkUrls);
   const ready =
     target.kind !== "none" &&
     (useExisting ||
-      ((!needsAddress || address.trim().length > 0) && (canMint || pairingCode.trim().length > 0)));
+      ((!needsAddress || address.trim().length > 0) &&
+        (canMint || codeOptional || pairingCode.trim().length > 0)));
 
   const prepareAnswer = async () => {
     if (target.kind === "none") return null;
@@ -415,6 +426,9 @@ function LinkRequestSheet(props: {
                   spellCheck={false}
                 />
                 <Text className="font-sans text-xs text-foreground-muted">
+                  {codeOptional
+                    ? "Optional on a Tailscale address, and used only if Tailscale sign-in is refused. "
+                    : ""}
                   Create a link on {targetName}: Settings → Connections → Create link, then paste
                   its code here.
                 </Text>

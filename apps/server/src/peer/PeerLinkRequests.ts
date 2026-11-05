@@ -323,7 +323,7 @@ const make = Effect.gen(function* () {
           .link({
             url,
             ...(alternateUrls.length === 0 ? {} : { alternateUrls }),
-            pairingCode: answer.pairingCode,
+            ...(answer.pairingCode === undefined ? {} : { pairingCode: answer.pairingCode }),
             access: answer.access,
             ...(answer.environmentId === undefined
               ? {}

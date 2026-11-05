@@ -10,6 +10,7 @@ import type { RelayDiscoveredEnvironment } from "./relay/discovery.ts";
 import {
   linkableMachines,
   linkedEnvironmentNames,
+  linkNeedsPairingCode,
   linkRequestAnswerInput,
   linkRequestDisplay,
   linkRequestFailureMessage,
@@ -79,10 +80,39 @@ describe("linkRequestAnswerInput", () => {
     ).toMatchObject({ answer: { urls: ["https://box.ts.net"] } });
   });
 
+  it("leaves the code out for a tailnet address, which links without one", () => {
+    const answer = (target: Parameters<typeof linkRequestAnswerInput>[1] & { type: "link" }) =>
+      linkRequestAnswerInput(item, target);
+    expect(answer({ type: "link", target: vps, access: "auto", pairingCode: "  " })).toEqual({
+      threadId: item.threadId,
+      turnItemId: item.id,
+      answer: { type: "link", ...vps, access: "auto" },
+    });
+    expect(
+      answer({
+        type: "link",
+        target: { url: "http://box.tail.ts.net" },
+        access: "auto",
+        pairingCode: "",
+      }),
+    ).toMatchObject({ answer: { urls: ["http://box.tail.ts.net"] } });
+    expect(linkNeedsPairingCode(vps.urls)).toBe(false);
+    expect(linkNeedsPairingCode(["http://10.0.0.2:3773"])).toBe(true);
+  });
+
   it("refuses a blank code, a blank address, or a machine with no address", () => {
     const blank = (target: Parameters<typeof linkRequestAnswerInput>[1] & { type: "link" }) =>
       linkRequestAnswerInput(item, target);
-    expect(blank({ type: "link", target: vps, access: "auto", pairingCode: "  " })).toBeNull();
+    const lan = { ...vps, urls: ["http://10.0.0.2:3773"] };
+    expect(blank({ type: "link", target: lan, access: "auto", pairingCode: "  " })).toBeNull();
+    expect(
+      blank({
+        type: "link",
+        target: { url: "http://10.0.0.2:3773" },
+        access: "auto",
+        pairingCode: "",
+      }),
+    ).toBeNull();
     expect(
       blank({ type: "link", target: { url: " " }, access: "auto", pairingCode: "abc" }),
     ).toBeNull();

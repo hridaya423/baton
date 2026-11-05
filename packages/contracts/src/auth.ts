@@ -529,6 +529,8 @@ export const AuthMcpApprovalDecision = Schema.Union([
     access: AuthMcpClientAccess,
     csrfToken: Schema.String,
   }),
+  /** The caller is another device on this host's tailnet; Tailscale says who it is. */
+  Schema.TaggedStruct("tailnet", { access: AuthMcpClientAccess }),
 ]);
 export type AuthMcpApprovalDecision = typeof AuthMcpApprovalDecision.Type;
 
