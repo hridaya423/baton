@@ -3,7 +3,10 @@ import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  type EnvironmentConnectionPhase,
+  TAILNET_SIGN_IN_PORT,
+} from "@t3tools/client-runtime/connection";
 import {
   sourceControlClients,
   type SourceControlDefinition,
@@ -1348,6 +1351,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/access",
     targetId: "connections-environment",
     searchTerms: ["serve magicdns endpoint remote secure network"],
+    desktopOnly: true,
+    localBackendManagementOnly: true,
+  },
+  {
+    id: "tailscale-sign-in",
+    title: "Tailscale sign-in",
+    to: "/settings/access",
+    targetId: "connections-environment",
+    searchTerms: [`tailnet no pairing code own devices phone port ${TAILNET_SIGN_IN_PORT} block`],
     desktopOnly: true,
     localBackendManagementOnly: true,
   },

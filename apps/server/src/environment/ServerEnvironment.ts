@@ -3,6 +3,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
+  tailscaleStateFromBackend,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
@@ -23,8 +24,10 @@ import * as ServerConfig from "../config.ts";
 import { databaseMigrationHead } from "../persistence/databaseMigrationHead.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { worktreeFastEnv } from "../vcs/worktreeFast.ts";
+import * as TailscaleHost from "../tailscale/TailscaleHost.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
+import { signInIssues } from "./TailscaleHealth.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -206,6 +209,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const tailscaleHost = yield* TailscaleHost.TailscaleHost;
   const identity = yield* ServerEnvironmentIdentity;
   const hostPlatform = yield* HostProcess.Platform;
   const hostArchitecture = yield* HostProcess.Architecture;
@@ -320,19 +324,33 @@ export const make = Effect.gen(function* () {
     },
   };
 
+  // Tailscale can stop or log out while the server runs; the status read is cached briefly.
+  const tailnetSignIn = serverConfig.tailscaleSignInEnabled
+    ? tailscaleHost.status.pipe(
+        Effect.map(
+          (status) =>
+            tailscaleStateFromBackend(status.backendState) === "running" &&
+            signInIssues(status).length === 0,
+        ),
+        Effect.orElseSucceed(() => false),
+      )
+    : Effect.succeed(false);
+
   return ServerEnvironment.of({
     getEnvironmentId: Effect.succeed(environmentId),
     // Publishing opt-in and relay links change at runtime; read the capability per request.
     getDescriptor: Effect.all([
       readAgentActivityPublishingActive(secrets),
       readWorktreeFastCapability,
+      tailnetSignIn,
     ]).pipe(
-      Effect.map(([agentActivityPublishing, worktreeFastCapability]) => ({
+      Effect.map(([agentActivityPublishing, worktreeFastCapability, tailnetSignInAvailable]) => ({
         ...descriptor,
         capabilities: {
           ...descriptor.capabilities,
           agentActivityPublishing,
           ...worktreeFastCapability,
+          ...(tailnetSignInAvailable ? { tailnetSignIn: true } : {}),
         },
       })),
     ),

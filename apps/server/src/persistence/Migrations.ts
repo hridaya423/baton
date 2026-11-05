@@ -87,6 +87,7 @@ import Migration0081 from "./Migrations/081_Captains.ts";
 import Migration0082 from "./Migrations/082_CaptainVerifyReview.ts";
 import Migration0083 from "./Migrations/083_CaptainLanding.ts";
 import Migration0084 from "./Migrations/084_CaptainRemoteOrders.ts";
+import Migration0085 from "./Migrations/085_AuthTailnetDeviceBlocks.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -174,6 +175,7 @@ const migrationEntries = [
   [82, "CaptainVerifyReview", Migration0082],
   [83, "CaptainLanding", Migration0083],
   [84, "CaptainRemoteOrders", Migration0084],
+  [85, "AuthTailnetDeviceBlocks", Migration0085],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

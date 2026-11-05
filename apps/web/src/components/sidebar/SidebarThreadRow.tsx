@@ -74,6 +74,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { SidebarMachineIcon } from "./SidebarMachineIcon";
 import {
   animateSidebarLayoutChanges,
   type SidebarV2TopStatusKind,
@@ -1194,7 +1195,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const remoteMachineIcon =
     isRemote && !showsScratchMachine ? (
       <span className="inline-flex shrink-0 items-center text-dim-foreground">
-        <EnvironmentMachineIcon aria-hidden kind={props.environmentMachine} className="size-3.5" />
+        <SidebarMachineIcon environmentId={thread.environmentId} kind={props.environmentMachine} />
       </span>
     ) : null;
   const multiline = variant === "folder-multiline";

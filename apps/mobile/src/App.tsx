@@ -1,4 +1,5 @@
 import { installPermissionUpdateNotice } from "./features/connection/permissionUpdateNotice";
+import { installTailnetDiscovery } from "./features/connection/tailnetDiscovery";
 import { installComposerAttachmentUploads } from "./state/composer-attachment-uploads";
 import { installThreadOutboxDelivery } from "./state/threadOutboxDelivery";
 import * as Linking from "expo-linking";
@@ -190,6 +191,7 @@ const appServiceDisposers = [
   installAppearanceRuntime(),
   installSubscriptionUsageRefresh(),
   installPermissionUpdateNotice(),
+  installTailnetDiscovery(),
   installThreadOutboxDelivery(),
   installComposerAttachmentUploads(),
   startIncomingShareInbox(),

@@ -228,7 +228,7 @@ address or `localhost`. A [background service](./background-service.md) installe
 `T3CODE_LAN` existed keeps private-network access, so without `remote` it refuses to start.
 Run `t3 up --no-lan` when its `service.env` sets no `T3CODE_HOST`, or set
 `T3CODE_HOST=127.0.0.1` in `service.env`, then run `t3 service restart`. The desktop app starts
-with network access and Tailscale Serve off, whatever the user chose. That also turns off
+with network access, Tailscale Serve, and Tailscale sign-in off, whatever the user chose. That also turns off
 T3 Connect. To keep other remote access but turn off T3 Connect alone, set `"connect": false`.
 
 When it starts, the server also turns off each Tailscale Serve route, HTTPS or TCP, that forwards

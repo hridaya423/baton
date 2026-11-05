@@ -435,6 +435,10 @@
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"
     },
+    "./defaultServerPort": {
+      "types": "./src/defaultServerPort.ts",
+      "import": "./src/defaultServerPort.ts"
+    },
     "./hostClassification": {
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"

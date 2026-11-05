@@ -17,6 +17,7 @@ import {
   type SignalExport,
 } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
+import { DEFAULT_SERVER_PORT } from "@t3tools/shared/defaultServerPort";
 import { type ReleaseChannel, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
 import packageJson from "../package.json" with { type: "json" };
 
@@ -26,7 +27,7 @@ declare const __T3CODE_TELEMETRY_CHANNEL__: ReleaseChannel | undefined;
 export const telemetryChannel: ReleaseChannel =
   typeof __T3CODE_TELEMETRY_CHANNEL__ === "undefined" ? "dev" : __T3CODE_TELEMETRY_CHANNEL__;
 
-export const DEFAULT_PORT = 3873;
+export const DEFAULT_PORT = DEFAULT_SERVER_PORT;
 
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
@@ -108,6 +109,12 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /** Tailscale devices may sign in with no pairing code: by grant, else the owner's own devices. */
+    readonly tailscaleSignInEnabled?: boolean | undefined;
+    /** The owner's Tailscale user ID on a tagged host, which has no user of its own. */
+    readonly tailscaleOwnerUserId?: string | undefined;
+    /** Accept only loopback and tailnet peers, and advertise no LAN routes. */
+    readonly tailscaleOnly?: boolean | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (

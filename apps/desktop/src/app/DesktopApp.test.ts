@@ -35,6 +35,7 @@ import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
+import * as DesktopTailscaleStatus from "../backend/DesktopTailscaleStatus.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
@@ -175,6 +176,11 @@ it.effect(
             configureFromSettings: () => Effect.succeed({ mode: "local-only" }),
             backendConfig: Effect.succeed({ httpBaseUrl: new URL("http://127.0.0.1:3773") }),
           } as unknown as DesktopServerExposure.DesktopServerExposure["Service"]),
+          Effect.provideService(DesktopTailscaleStatus.DesktopTailscaleStatus, {
+            read: Effect.die("unexpected Tailscale read"),
+            status: Effect.succeed(null),
+            discoverEnvironments: Effect.succeed([]),
+          }),
           Effect.provideService(DesktopWslBackend.DesktopWslBackend, {
             reconcile: Effect.void,
           } as DesktopWslBackend.DesktopWslBackend["Service"]),

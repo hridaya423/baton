@@ -5,6 +5,8 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as NodeOS from "node:os";
+import * as TailnetSignIn from "./auth/TailnetSignIn.ts";
+import * as TailnetPeers from "./environment/TailnetPeers.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -87,6 +89,8 @@ import {
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
   type ServerProvider,
+  type ServerTailscaleStatus,
+  TAILNET_SUBJECT_PREFIX,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
   AssetWorkspaceContextNotFoundError,
@@ -229,6 +233,7 @@ import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
+import * as TailscaleHealth from "./environment/TailscaleHealth.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -324,12 +329,26 @@ const resolveEditorConfig = Effect.fn("ws.resolveEditorConfig")(function* <E, R>
   };
 });
 
+// `checkedAt` changes on every read, so it alone is worth a snapshot only now and then.
+const tailscaleFacts = (status: ServerTailscaleStatus | undefined) =>
+  status === undefined ? "" : JSON.stringify({ ...status, checkedAt: null });
+const TAILSCALE_CHECKED_AT_REFRESH_MS = 10 * 60_000;
+const tailscaleReadIsNews = (
+  previous: ServerTailscaleStatus | undefined,
+  next: ServerTailscaleStatus | undefined,
+) =>
+  tailscaleFacts(previous) !== tailscaleFacts(next) ||
+  (previous !== undefined &&
+    next !== undefined &&
+    Date.parse(next.checkedAt) - Date.parse(previous.checkedAt) >= TAILSCALE_CHECKED_AT_REFRESH_MS);
+
 export const withLateConfigDiscovery = <E, R>(
   config: ClientServerConfig,
   liveUpdates: Stream.Stream<ServerConfigStreamEvent, E, R>,
   launcher: EditorDiscovery,
   remoteOpenTargets: RemoteOpenTargets.RemoteOpenTargets["Service"],
   directEndpoints: Pick<DirectEndpoints.DirectEndpoints["Service"], "resolve">,
+  tailscaleReads: Stream.Stream<ServerTailscaleStatus | undefined> = Stream.empty,
 ) => {
   const lateEditorConfig = Stream.fromEffect(launcher.resolveAvailableEditors()).pipe(
     Stream.filter(
@@ -356,6 +375,9 @@ export const withLateConfigDiscovery = <E, R>(
     ),
     Stream.map((targets) => ({ type: "remoteOpenTargetsResolved" as const, targets })),
   );
+  const lateTailscale = tailscaleReads.pipe(
+    Stream.map((tailscale) => ({ type: "tailscaleRead" as const, tailscale })),
+  );
 
   const lateDirectEndpoints = Stream.fromEffect(directEndpoints.resolve()).pipe(
     Stream.catchCause(() => Stream.empty),
@@ -364,7 +386,10 @@ export const withLateConfigDiscovery = <E, R>(
 
   return Stream.merge(
     liveUpdates,
-    Stream.merge(lateEditorConfig, Stream.merge(lateRemoteOpenTargets, lateDirectEndpoints)),
+    Stream.merge(
+      lateEditorConfig,
+      Stream.merge(lateRemoteOpenTargets, Stream.merge(lateDirectEndpoints, lateTailscale)),
+    ),
   ).pipe(
     Stream.mapAccum(
       (): ClientServerConfig => config,
@@ -389,6 +414,13 @@ export const withLateConfigDiscovery = <E, R>(
               return [current, []];
             }
             const next = { ...current, directEndpoints: event.endpoints };
+            return [next, [{ version: 1, type: "snapshot", config: next }]];
+          }
+          case "tailscaleRead": {
+            if (!tailscaleReadIsNews(current.tailscale, event.tailscale)) return [current, []];
+            const { tailscale: _previous, ...rest } = current;
+            const next =
+              event.tailscale === undefined ? rest : { ...rest, tailscale: event.tailscale };
             return [next, [{ version: 1, type: "snapshot", config: next }]];
           }
           case "keybindingsUpdated":
@@ -1486,6 +1518,7 @@ export const layerWsRpc = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
+      const tailscaleHealth = yield* TailscaleHealth.TailscaleHealth;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
@@ -1511,6 +1544,8 @@ export const layerWsRpc = (
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+      const tailnetSignIn = yield* TailnetSignIn.TailnetSignIn;
+      const tailnetPeers = yield* TailnetPeers.TailnetPeers;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1572,7 +1607,12 @@ export const layerWsRpc = (
       ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
         currentSession.scopes.includes(requiredScope)
           ? effect
-          : Effect.fail(rpcAuthorizationError(requiredScope));
+          : Effect.fail(
+              rpcAuthorizationError(
+                requiredScope,
+                currentSession.subject.startsWith(TAILNET_SUBJECT_PREFIX),
+              ),
+            );
 
       const acpRegistryProject = Effect.fn("ws.acpRegistry.project")(function* (
         projectId: ProjectId,
@@ -1911,6 +1951,13 @@ export const layerWsRpc = (
         readonly workspaceSnapshotsOnDemand: boolean;
         readonly deferNetworkDiscovery: boolean;
       }) {
+        // Runs beside the rest: `tailscale status` can take seconds on Windows.
+        const tailscaleFiber = yield* Effect.forkChild(
+          resolveDiscoveryForConfig<ServerTailscaleStatus | undefined, never, never>(
+            tailscaleHealth.check,
+            () => undefined,
+          ),
+        );
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const currentProviders = yield* providerRegistry.getProviders;
         const commandProviders = options.usageLimitsCommand
@@ -1937,6 +1984,7 @@ export const layerWsRpc = (
             ? directEndpoints.resolveAvailable()
             : directEndpoints.resolve(),
         });
+        const tailscale = yield* Fiber.join(tailscaleFiber);
 
         return {
           environment,
@@ -1995,6 +2043,7 @@ export const layerWsRpc = (
           newProjectsRoot: managedFolders.namedProjectsRoot,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
           homeDirectory: NodeOS.homedir(),
+          ...(tailscale === undefined ? {} : { tailscale }),
         };
       });
 
@@ -2775,6 +2824,20 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
           ),
+        [WS_METHODS.tailnetDevicesList]: (_input) =>
+          tailnetSignIn
+            .listDevices(currentSession.subject)
+            .pipe(Effect.map((devices) => ({ devices }))),
+        [WS_METHODS.tailnetDevicesBlock]: ({ stableNodeId }) =>
+          tailnetSignIn
+            .blockDevice(stableNodeId)
+            .pipe(Effect.map((revokedSessionCount) => ({ revokedSessionCount }))),
+        [WS_METHODS.tailnetDevicesUnblock]: ({ stableNodeId }) =>
+          tailnetSignIn
+            .unblockDevice(stableNodeId)
+            .pipe(Effect.map((unblocked) => ({ unblocked }))),
+        [WS_METHODS.tailnetPeersList]: (_input) =>
+          tailnetPeers.list.pipe(Effect.map((peers) => ({ peers }))),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
@@ -3501,10 +3564,9 @@ export const layerWsRpc = (
                   initialConfig,
                   liveUpdates,
                   externalLauncher,
-                  {
-                    resolveTargets: () => Fiber.join(remoteTargets),
-                  },
+                  { resolveTargets: () => Fiber.join(remoteTargets) },
                   { resolve: () => Fiber.join(directResult) },
+                  tailscaleHealth.reads,
                 ),
               );
             }),
@@ -3594,6 +3656,9 @@ export const layer = Layer.unwrap(
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+    // Shared across connections, so the peer probe cache is too.
+    const tailnetSignIn = yield* TailnetSignIn.TailnetSignIn;
+    const tailnetPeers = yield* TailnetPeers.TailnetPeers;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3634,21 +3699,25 @@ export const layer = Layer.unwrap(
             Effect.provideService(RpcServer.Protocol, withTerminalOutputWindow(protocol)),
             Effect.provide(
               Layer.merge(
-                RpcAuthorization.layer(session.scopes, (method, payload) => {
-                  // Anonymous product signal: the feature and its enum variant,
-                  // credited to the connecting client's surface only.
-                  const usage = featureUsage(method, payload);
-                  return usage === undefined
-                    ? Effect.void
-                    : analytics
-                        .record("feature.used", {
-                          ...usage,
-                          ...(clientAnalyticsProps.surface === undefined
-                            ? {}
-                            : { surface: clientAnalyticsProps.surface }),
-                        })
-                        .pipe(Effect.ignore);
-                }),
+                RpcAuthorization.layer(
+                  session.scopes,
+                  (method, payload) => {
+                    // Anonymous product signal: the feature and its enum variant,
+                    // credited to the connecting client's surface only.
+                    const usage = featureUsage(method, payload);
+                    return usage === undefined
+                      ? Effect.void
+                      : analytics
+                          .record("feature.used", {
+                            ...usage,
+                            ...(clientAnalyticsProps.surface === undefined
+                              ? {}
+                              : { surface: clientAnalyticsProps.surface }),
+                          })
+                          .pipe(Effect.ignore);
+                  },
+                  session.subject.startsWith(TAILNET_SUBJECT_PREFIX),
+                ),
                 rpcInstrumentationLayer,
               ),
             ),
@@ -3685,6 +3754,8 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
+              Layer.provide(Layer.succeed(TailnetSignIn.TailnetSignIn, tailnetSignIn)),
+              Layer.provide(Layer.succeed(TailnetPeers.TailnetPeers, tailnetPeers)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

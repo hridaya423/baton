@@ -63,6 +63,8 @@ describe("V2 preview upgrade", () => {
         [81, "Captains"],
         [82, "CaptainVerifyReview"],
         [83, "CaptainLanding"],
+        [84, "CaptainRemoteOrders"],
+        [85, "AuthTailnetDeviceBlocks"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -169,6 +171,8 @@ describe("V2 preview upgrade", () => {
         [81, "Captains"],
         [82, "CaptainVerifyReview"],
         [83, "CaptainLanding"],
+        [84, "CaptainRemoteOrders"],
+        [85, "AuthTailnetDeviceBlocks"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
