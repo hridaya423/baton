@@ -68,7 +68,11 @@ export type T3McpToolSummaryAction =
   | "browser"
   | "device"
   | "html-preview"
-  | "html-render";
+  | "html-render"
+  | "media-image"
+  | "media-video"
+  | "media-list"
+  | "media-get";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -372,6 +376,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+  media_image_generate: tool(["Generate", "Generating", "Generated", "an image"], "media-image"),
+  media_image_edit: tool(["Edit", "Editing", "Edited", "an image"], "media-image"),
+  media_video_generate: tool(["Generate", "Generating", "Generated", "a video"], "media-video"),
+  media_list: tool(["List", "Listing", "Listed", "project media"], "media-list"),
+  media_get: tool(["Read", "Reading", "Read", "a media record"], "media-get"),
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));

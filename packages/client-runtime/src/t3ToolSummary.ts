@@ -472,6 +472,18 @@ export function summarizeT3ToolCalls(
     case "html-render":
       label = phrase("Rendered", "render", quantity(selected.length, "HTML page"));
       break;
+    case "media-image":
+      label = phrase("Made", "make", quantity(selected.length, "image"));
+      break;
+    case "media-video":
+      label = phrase("Made", "make", quantity(selected.length, "video"));
+      break;
+    case "media-list":
+      label = phrase("Listed", "list", `project media ${times}`);
+      break;
+    case "media-get":
+      label = phrase("Read", "read", quantity(selected.length, "media record"));
+      break;
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);
       break;

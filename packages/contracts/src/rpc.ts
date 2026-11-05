@@ -325,6 +325,7 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
+import { MediaSpend, MediaSpendError, MediaSpendInput } from "./media.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -532,6 +533,7 @@ export const WS_METHODS = {
   deviceTestHost: "device.testHost",
   deviceEasAccount: "device.easAccount",
   deviceSimlockIdentity: "device.simlockIdentity",
+  mediaSpend: "media.spend",
   deviceOpen: "device.open",
   deviceClose: "device.close",
   deviceShutdown: "device.shutdown",
@@ -1805,6 +1807,12 @@ const WsDeviceSimlockIdentityRpc = Rpc.make(WS_METHODS.deviceSimlockIdentity, {
   error: Schema.Union([DeviceSimlockIdentityError, EnvironmentAuthorizationError]),
 });
 
+const WsMediaSpendRpc = Rpc.make(WS_METHODS.mediaSpend, {
+  payload: MediaSpendInput,
+  success: MediaSpend,
+  error: Schema.Union([MediaSpendError, EnvironmentAuthorizationError]),
+});
+
 const WsDeviceListRpc = Rpc.make(WS_METHODS.deviceList, {
   payload: DeviceListInput,
   success: DeviceServiceState,
@@ -2407,6 +2415,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceTestHostRpc,
   WsDeviceEasAccountRpc,
   WsDeviceSimlockIdentityRpc,
+  WsMediaSpendRpc,
   WsDeviceOpenRpc,
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,

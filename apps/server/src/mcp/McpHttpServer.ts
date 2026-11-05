@@ -81,6 +81,14 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import * as MediaService from "../media/MediaService.ts";
+import * as MediaHandlers from "./toolkits/media/handlers.ts";
+import {
+  MediaImageEditTool,
+  MediaImageGenerateTool,
+  MediaImageToolkit,
+  MediaStandardToolkit,
+} from "./toolkits/media/tools.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -686,6 +694,58 @@ const imageToolFailure =
     }).pipe(Effect.as(result));
   };
 
+const screenshotResult = (encodedResult: unknown, payload: unknown) => {
+  const { screenshot, ...rest } = encodedResult as ImageToolResult;
+  const includeImage =
+    (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !== false;
+  const metadata = {
+    ...rest,
+    screenshot: {
+      mimeType: screenshot.mimeType,
+      width: screenshot.width,
+      height: screenshot.height,
+    },
+  };
+  return new McpSchema.CallToolResult({
+    isError: false,
+    structuredContent: metadata,
+    content: [
+      { type: "text", text: JSON.stringify(metadata) },
+      ...(includeImage
+        ? [
+            {
+              type: "image" as const,
+              data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
+              mimeType: screenshot.mimeType,
+            },
+          ]
+        : []),
+    ],
+  });
+};
+
+const mediaImageResult = (encodedResult: unknown) => {
+  const { preview, ...metadata } = encodedResult as {
+    readonly preview?: { readonly mimeType: string; readonly data: string };
+  };
+  return new McpSchema.CallToolResult({
+    isError: false,
+    structuredContent: metadata,
+    content: [
+      { type: "text", text: JSON.stringify(metadata) },
+      ...(preview === undefined
+        ? []
+        : [
+            {
+              type: "image" as const,
+              data: new Uint8Array(Buffer.from(preview.data, "base64")),
+              mimeType: preview.mimeType,
+            },
+          ]),
+    ],
+  });
+};
+
 /**
  * `McpServer.toolkit` serializes every result as JSON text, which is the wrong
  * shape for a screenshot: the model needs image content.
@@ -706,6 +766,7 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
   >,
   operation: string,
   failureText: string | ((error: E) => string),
+  render: (encodedResult: unknown, payload: unknown) => McpSchema.CallToolResult = screenshotResult,
 ) {
   const server = yield* McpServer.McpServer;
   yield* server.addTool({
@@ -735,38 +796,7 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.matchCauseEffect({
             onFailure: imageToolFailure(tool.name, operation, failureText),
-            onSuccess: ({ encodedResult }) => {
-              const { screenshot, ...rest } = encodedResult as ImageToolResult;
-              const includeImage =
-                (payload as { readonly includeImage?: boolean } | undefined)?.includeImage !==
-                false;
-              const metadata = {
-                ...rest,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-              };
-              return Effect.succeed(
-                new McpSchema.CallToolResult({
-                  isError: false,
-                  structuredContent: metadata,
-                  content: [
-                    { type: "text", text: JSON.stringify(metadata) },
-                    ...(includeImage
-                      ? [
-                          {
-                            type: "image" as const,
-                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                            mimeType: screenshot.mimeType,
-                          },
-                        ]
-                      : []),
-                  ],
-                }),
-              );
-            },
+            onSuccess: ({ encodedResult }) => Effect.succeed(render(encodedResult, payload)),
           }),
         );
       }),
@@ -802,6 +832,49 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
 
 const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 const isDeviceToolError = Schema.is(DeviceToolError);
+
+const registerMediaImages = Effect.fn("McpHttpServer.registerMediaImages")(function* () {
+  const media = yield* MediaService.MediaService;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const built = yield* decodeAsAdvertised(MediaImageToolkit);
+  const provide = <A, E>(
+    effect: Effect.Effect<
+      A,
+      E,
+      | McpInvocationContext.McpInvocationContext
+      | MediaService.MediaService
+      | ThreadManagementService.ThreadManagementService
+    >,
+  ) =>
+    effect.pipe(
+      Effect.provideService(MediaService.MediaService, media),
+      Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+    );
+  const failureText = (error: unknown) =>
+    isOrchestratorMcpFailure(error) ? error.message : "Image generation failed.";
+  yield* registerImageTool(
+    MediaImageGenerateTool,
+    (payload) =>
+      built
+        .handle("media_image_generate", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    provide,
+    "generate",
+    failureText,
+    mediaImageResult,
+  );
+  yield* registerImageTool(
+    MediaImageEditTool,
+    (payload) =>
+      built
+        .handle("media_image_edit", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    provide,
+    "edit",
+    failureText,
+    mediaImageResult,
+  );
+});
 
 const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(function* () {
   const htmlRender = yield* HtmlRender.HtmlRender;
@@ -1110,6 +1183,11 @@ export const layerHtmlToolkit = Layer.mergeAll(
   imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
 ).pipe(Layer.provide(HtmlRender.layer));
 
+export const layerMediaToolkit = Layer.mergeAll(
+  toolkitRegistration(MediaStandardToolkit, MediaHandlers.layerStandard),
+  imageToolRegistration(registerMediaImages(), MediaHandlers.layerImages),
+);
+
 const layerPreviewStandardToolkitRegistration = toolkitRegistration(
   PreviewStandardToolkit,
   PreviewHandlers.layerStandard,
@@ -1219,6 +1297,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerMediaToolkit,
 );
 
 export const layer = layerMcpTransport(layerTools);

@@ -1003,6 +1003,31 @@ export const UsageLimitSourceConfig = Schema.Struct({
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
+const MEDIA_DEFAULT_DAILY_SPEND_CAP_USD = 5;
+
+const MediaDailySpendCapUsd = Schema.Number.check(
+  Schema.isBetween({ minimum: 0, maximum: 100_000 }),
+);
+
+export const MediaSettings = Schema.Struct({
+  openaiApiKey: SettingsSecretValue.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    secretSetting,
+  ),
+  geminiApiKey: SettingsSecretValue.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    secretSetting,
+  ),
+  falApiKey: SettingsSecretValue.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    secretSetting,
+  ),
+  dailySpendCapUsd: MediaDailySpendCapUsd.pipe(
+    Schema.withDecodingDefault(Effect.succeed(MEDIA_DEFAULT_DAILY_SPEND_CAP_USD)),
+  ),
+});
+export type MediaSettings = typeof MediaSettings.Type;
+
 export const SecretProviderKind = SecretProviderSlug.pipe(Schema.brand("SecretProviderKind"));
 export type SecretProviderKind = typeof SecretProviderKind.Type;
 
@@ -1618,6 +1643,7 @@ export const ServerSettings = Schema.Struct({
   secretProviders: Schema.Record(SecretProviderId, SecretProviderConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  media: MediaSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   cursorKeychainUsageEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -2011,6 +2037,14 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   secretProviders: Schema.optionalKey(
     Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfigWrite)),
+  ),
+  media: Schema.optionalKey(
+    Schema.Struct({
+      openaiApiKey: Schema.optionalKey(SettingsSecretValue),
+      geminiApiKey: Schema.optionalKey(SettingsSecretValue),
+      falApiKey: Schema.optionalKey(SettingsSecretValue),
+      dailySpendCapUsd: Schema.optionalKey(MediaDailySpendCapUsd),
+    }),
   ),
   cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
 

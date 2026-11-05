@@ -56,6 +56,7 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
+import * as MediaService from "../../media/MediaService.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
@@ -311,6 +312,82 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
       ),
     ),
   ),
+);
+
+it.effect(
+  "media_image_generate returns the image to the model and one sentence when no key is set",
+  () => {
+    const generated = {
+      id: "media_3f9a1c2b7d40",
+      kind: "image" as const,
+      status: "complete" as const,
+      paths: ["/home/user/app/.baton/media/2026-11-05/media_3f9a1c2b7d40.png"],
+      model: "gpt-image-1",
+      backend: "openai" as const,
+      cost: { usd: 0.17, estimated: false },
+      prompt: "a lighthouse",
+      createdAt: "2026-11-05T00:00:00.000Z",
+      preview: { mimeType: "image/png", data: Buffer.from([137, 80, 78, 71]).toString("base64") },
+    };
+    const shell = (interactionMode: "default" | "plan") =>
+      ({
+        id: threadId,
+        projectId: ProjectId.make("mcp-core-project"),
+        deletedAt: null,
+        archivedAt: null,
+        activeRunId: RunId.make("mcp-core-run"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        runtimeMode: "full-access",
+        interactionMode,
+      }) as OrchestrationV2ThreadShell;
+    const call = (keyMissing: boolean, interactionMode: "default" | "plan") =>
+      Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+        return yield* server
+          .callTool({ name: "media_image_generate", arguments: { prompt: "a lighthouse" } })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+      }).pipe(
+        Effect.provide(
+          McpHttpServer.layerMediaToolkit.pipe(
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+            Layer.provide(
+              Layer.mock(MediaService.MediaService)({
+                generateImage: () =>
+                  keyMissing
+                    ? Effect.fail(new MediaService.MediaKeyMissingError({ kind: "image" }))
+                    : Effect.succeed(generated),
+              }),
+            ),
+            Layer.provide(
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                getThreadShell: () => Effect.succeed(shell(interactionMode)),
+              }),
+            ),
+          ),
+        ),
+      );
+    return Effect.gen(function* () {
+      const ok = yield* call(false, "default");
+      expect(ok.isError).toBe(false);
+      expect(ok.structuredContent).toEqual({
+        id: generated.id,
+        paths: generated.paths,
+        model: "gpt-image-1",
+        cost: generated.cost,
+      });
+      expect(ok.content.map((block) => block.type)).toEqual(["text", "image"]);
+      const refused = yield* call(true, "default");
+      expect(refused.isError).toBe(true);
+      expect(refused.content).toEqual([
+        { type: "text", text: "No image key. Add one in Settings → Media." },
+      ]);
+      const planned = yield* call(false, "plan");
+      expect(planned.isError).toBe(true);
+    });
+  },
 );
 
 it.effect("records only failed calls of tools that hand off no work", () => {

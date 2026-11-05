@@ -3,6 +3,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   EasDeviceHostConfig,
+  MediaSettings,
   type ProviderInstanceConfig,
   type ServerSettings,
   type SettingsSecretValue,
@@ -45,6 +46,7 @@ const providerSecretFields = new Map([
   ),
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
+const mediaSecretFields = secretSettingsFields(MediaSettings);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
@@ -207,6 +209,12 @@ function mapSecretFieldGroups(
     ]),
   ) as ServerSettings["usageLimitSources"];
 
+  const media = mapFields(
+    settings.media,
+    mediaSecretFields,
+    (field) => `media-${encode(field)}`,
+  ) as MediaSettings;
+
   const easDeviceHosts = settings.easDeviceHosts.map(
     (host) =>
       mapFields(
@@ -235,6 +243,7 @@ function mapSecretFieldGroups(
     providerInstances,
     sourceControlHosts,
     usageLimitSources,
+    media,
     easDeviceHosts,
     simlockDeviceHosts,
   };

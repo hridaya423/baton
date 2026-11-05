@@ -150,8 +150,15 @@ it.effect("reads a collected reference again once it is invalidated", () =>
         accessToken: source("expo#token"),
       },
     ];
+    const media = {
+      openaiApiKey: source("openai#key"),
+      geminiApiKey: "",
+      falApiKey: "",
+      dailySpendCapUsd: 5,
+    };
     cache.set("cliproxy#key", "stale");
     cache.set("expo#token", "stale");
+    cache.set("openai#key", "stale");
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "stale",
@@ -159,10 +166,11 @@ it.effect("reads a collected reference again once it is invalidated", () =>
     current = "rotated";
     yield* invalidateSettingsSecrets(
       resolver,
-      Effect.succeed({ sourceControlHosts: hosts, usageLimitSources, easDeviceHosts }),
+      Effect.succeed({ sourceControlHosts: hosts, usageLimitSources, media, easDeviceHosts }),
     );
     assert.isFalse(cache.has("cliproxy#key"));
     assert.isFalse(cache.has("expo#token"));
+    assert.isFalse(cache.has("openai#key"));
     assert.deepEqual((yield* read()).bitbucket, {
       email: "me@example.test",
       accessToken: "rotated",

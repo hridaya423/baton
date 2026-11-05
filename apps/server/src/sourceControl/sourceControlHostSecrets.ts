@@ -104,6 +104,11 @@ const collectUsageLimitSecretReferences = (
     isSecretReference(managementKey) ? [managementKey] : [],
   );
 
+const collectMediaSecretReferences = (
+  media: ServerSettings["media"],
+): ReadonlyArray<SecretReference> =>
+  [media.openaiApiKey, media.geminiApiKey, media.falApiKey].filter(isSecretReference);
+
 const collectEasSecretReferences = (
   hosts: ServerSettings["easDeviceHosts"],
 ): ReadonlyArray<SecretReference> =>
@@ -113,7 +118,7 @@ const collectEasSecretReferences = (
 export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")(function* <E>(
   resolver: SecretResolver.SecretResolver["Service"],
   settings: Effect.Effect<
-    Pick<ServerSettings, "sourceControlHosts" | "usageLimitSources" | "easDeviceHosts">,
+    Pick<ServerSettings, "sourceControlHosts" | "usageLimitSources" | "media" | "easDeviceHosts">,
     E
   >,
 ) {
@@ -121,6 +126,7 @@ export const invalidateSettingsSecrets = Effect.fn("SettingsSecrets.invalidate")
     Effect.map((current) => [
       ...collectSourceControlHostSecretReferences(current.sourceControlHosts),
       ...collectUsageLimitSecretReferences(current.usageLimitSources),
+      ...collectMediaSecretReferences(current.media),
       ...collectEasSecretReferences(current.easDeviceHosts),
     ]),
     Effect.orElseSucceed(() => undefined),
