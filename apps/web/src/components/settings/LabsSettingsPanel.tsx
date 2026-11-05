@@ -25,6 +25,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <MentionIndexRow />
+        <PromptSuggestionsRow />
         <SimlockHostsRow />
         <ToolCallCardsRow />
       </SettingsSection>
@@ -189,6 +190,29 @@ function MentionIndexRow() {
           checked={settings.mentionIndexEnabled}
           onCheckedChange={(checked) => updateSettings({ mentionIndexEnabled: Boolean(checked) })}
           aria-label="Mention index"
+        />
+      }
+    />
+  );
+}
+
+function PromptSuggestionsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("prompt-suggestions-beta")}
+      settingKeys={["promptSuggestionsEnabled"]}
+      description="After a Claude or Codex turn completes, show a predicted next message in the empty composer. Press Tab to use it. Each suggestion is one extra cached request, so it uses some of your plan. Codex needs version 0.165 or later. Open Claude threads follow a change after they restart."
+      control={
+        <ScopedSwitch
+          settingKeys={["promptSuggestionsEnabled"]}
+          checked={settings.promptSuggestionsEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
+          }
+          aria-label="Suggest next prompt"
         />
       }
     />

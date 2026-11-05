@@ -46,6 +46,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
   type RefObject,
 } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
@@ -164,6 +165,8 @@ export interface ComposerPromptEditorProps {
   disabled: boolean;
   placeholder: string;
   narrowPlaceholder?: string | undefined;
+  /** Rendered after the placeholder text, such as a key hint. */
+  placeholderSuffix?: ReactNode;
   ariaLabel?: string | undefined;
   suggestionListId?: string | undefined;
   suggestionsOpen?: boolean | undefined;
@@ -883,6 +886,7 @@ function ComposerPromptEditorTiptapInner(
     containerClassName,
     className,
     placeholderClassName,
+    placeholderSuffix,
     onChange,
     onVisibleSelectionChange,
     onCommandKeyDown,
@@ -1820,6 +1824,7 @@ function ComposerPromptEditorTiptapInner(
                 ) : (
                   placeholder
                 )}
+                {placeholderSuffix}
               </div>
             ) : null}
           </div>
