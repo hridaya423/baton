@@ -55,6 +55,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadRoles from "./ThreadRoles.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -231,6 +232,8 @@ interface LiveSessionEntry {
   readonly supportsMultipleProviderThreads: boolean;
   /** Captured external credential identity (e.g. Codex CLI auth.json). undefined: no baseline yet; null: unreadable/missing. */
   readonly credentialFingerprint?: string | null;
+  /** The MCP tool surface each thread's client was built with; a different one makes the session stale. */
+  readonly toolSurfaceByThread: Map<ThreadId, string>;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -350,6 +353,11 @@ export const layerWithOptions = (
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      const threadRoles = yield* Effect.serviceOption(ThreadRoles.ThreadRoles);
+      const toolSurfaceOf = (threadId: ThreadId) =>
+        Option.isNone(threadRoles)
+          ? Effect.succeed("")
+          : Effect.map(threadRoles.value.get(threadId), (entry) => entry?.role ?? "");
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
@@ -1260,6 +1268,33 @@ export const layerWithOptions = (
           });
         }
         return released;
+      });
+
+      const releaseIfToolSurfaceChanged = Effect.fn(
+        "ProviderSessionManager.releaseIfToolSurfaceChanged",
+      )(function* (entry: LiveSessionEntry, threadId: ThreadId): Effect.fn.Return<boolean> {
+        const current = yield* toolSurfaceOf(threadId);
+        const baseline = entry.toolSurfaceByThread.get(threadId);
+        if (baseline === undefined) {
+          entry.toolSurfaceByThread.set(threadId, current);
+          return false;
+        }
+        if (baseline === current) return false;
+        const hasPendingWork =
+          entry.runtime.hasPendingBackgroundWork === undefined
+            ? false
+            : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                Effect.catchCause(() => Effect.succeed(true)),
+              );
+        if (hasPendingWork) return false;
+        yield* releaseEntry({
+          providerSessionId: entry.runtime.providerSessionId,
+          reason: "manual_shutdown",
+          detail: "Thread tools changed.",
+          keepIfBusyOtherThan: [],
+        }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
+        const live = (yield* Ref.get(sessions)).get(sessionKey(entry.runtime.providerSessionId));
+        return live?.runtime !== entry.runtime;
       });
 
       const withActivityError = <A, E, R>(
@@ -2227,7 +2262,11 @@ export const layerWithOptions = (
               const existing = (yield* Ref.get(sessions)).get(key);
               // Reuse requires no credential-driven release; upstream's
               // releaseIfAdapterRebuilt will `||` at this same seam once it merges.
-              if (existing !== undefined && !(yield* releaseIfCredentialChanged(existing))) {
+              if (
+                existing !== undefined &&
+                !(yield* releaseIfCredentialChanged(existing)) &&
+                !(yield* releaseIfToolSurfaceChanged(existing, input.threadId))
+              ) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
@@ -2270,6 +2309,7 @@ export const layerWithOptions = (
               });
               const sessionScope = yield* Scope.fork(sessionScopes);
               yield* agentScope.clear(input.threadId);
+              const toolSurface = yield* toolSurfaceOf(input.threadId);
               // Probe before the spawn: a baseline newer than the identity the
               // app-server reads at spawn would match a stale process forever.
               const credentialFingerprint = adapter.resolveCredentialFingerprint
@@ -2345,6 +2385,7 @@ export const layerWithOptions = (
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
                 ...(credentialFingerprint !== undefined ? { credentialFingerprint } : {}),
+                toolSurfaceByThread: new Map([[input.threadId, toolSurface]]),
                 runtime,
                 exposedRuntime,
                 eventSubscribers,

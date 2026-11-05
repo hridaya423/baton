@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
+  CaptainId,
   EnvironmentId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -53,6 +54,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ThreadRoles from "./ThreadRoles.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -611,6 +613,7 @@ function layerTest(input: {
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly threadRoles?: ThreadRoles.ThreadRoles["Service"];
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -698,6 +701,9 @@ function layerTest(input: {
           layerTestStores,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.threadRoles === undefined
+            ? []
+            : [Layer.succeed(ThreadRoles.ThreadRoles, input.threadRoles)]),
         ),
       ),
     ),
@@ -4742,6 +4748,128 @@ it.effect(
           layerTest({
             state,
             idleTimeoutMs: 60_000,
+          }),
+        ),
+      );
+    }),
+);
+
+const makeThreadRoles = () => {
+  const roles = new Map<ThreadId, ThreadRoles.ThreadRoleEntry>();
+  return ThreadRoles.ThreadRoles.of({
+    get: (threadId) => Effect.sync(() => roles.get(threadId)),
+    set: (threadId, entry) =>
+      Effect.sync(() => {
+        if (entry === undefined) roles.delete(threadId);
+        else roles.set(threadId, entry);
+      }),
+  });
+};
+
+it.effect(
+  "ProviderSessionManagerV2 opens a fresh runtime for a thread whose captain role changed, and keeps the rest",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const threadRoles = makeThreadRoles();
+      const bystanderId = ThreadId.make("thread-roles-bystander");
+      const threadId = ThreadId.make("thread-roles-promoted");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const sessionIds = yield* Effect.forEach([threadId, bystanderId], (id) =>
+          idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId: id,
+          }),
+        );
+        for (const id of [threadId, bystanderId]) {
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: id, now })],
+          });
+        }
+        const open = (id: ThreadId, providerSessionId: (typeof sessionIds)[number]) =>
+          manager.open({ threadId: id, providerSessionId, modelSelection, runtimePolicy });
+        const [promotedSession, bystanderSession] = sessionIds as [
+          (typeof sessionIds)[number],
+          (typeof sessionIds)[number],
+        ];
+
+        const first = yield* open(threadId, promotedSession);
+        const bystander = yield* open(bystanderId, bystanderSession);
+        assert.strictEqual(yield* open(threadId, promotedSession), first);
+
+        yield* threadRoles.set(threadId, {
+          role: "captain",
+          captainId: CaptainId.make("captain:roles"),
+          instructions: "You are a captain.",
+        });
+        const afterPromotion = yield* open(threadId, promotedSession);
+        assert.notStrictEqual(afterPromotion, first);
+        assert.strictEqual(yield* open(threadId, promotedSession), afterPromotion);
+        assert.strictEqual(yield* open(bystanderId, bystanderSession), bystander);
+        assert.equal((yield* Ref.get(state)).openCount, 3);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+
+        yield* threadRoles.set(threadId, undefined);
+        const afterRelease = yield* open(threadId, promotedSession);
+        assert.notStrictEqual(afterRelease, afterPromotion);
+        assert.equal((yield* Ref.get(state)).openCount, 4);
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, threadRoles })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a session with background work when the role changes",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const threadRoles = makeThreadRoles();
+      const threadId = ThreadId.make("thread-roles-working");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const first = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* threadRoles.set(threadId, {
+          role: "crew",
+          captainId: CaptainId.make("captain:roles"),
+          instructions: "You are crew.",
+        });
+        const second = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(second, first);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            threadRoles,
+            hasPendingBackgroundWork: Effect.succeed(true),
           }),
         ),
       );

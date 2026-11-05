@@ -2,6 +2,8 @@ import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as CaptainService from "../captains/CaptainService.ts";
 import * as CaptainStore from "../captains/CaptainStore.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ThreadRoles from "./ThreadRoles.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -132,9 +134,13 @@ const layerCommandOutputHubProvided = CommandOutputHub.layer.pipe(
   Layer.provide(Layer.merge(layerEventSink, ProjectionStore.layer)),
 );
 
+/** One registry of captain, crew and reviewer threads, shared by every service that reads it. */
+const layerThreadRoles = ThreadRoles.layer;
+
 const layerProviderSessionManagerProvided = ProviderSessionManager.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerThreadRoles,
       layerCommandOutputHubProvided,
       ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       layerEventSink,
@@ -166,6 +172,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerThreadRoles,
       layerContextHandoffServiceProvided,
       layerEventSink,
       IdAllocator.layer,
@@ -296,6 +303,8 @@ const layerCaptainProvided = CaptainService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       CaptainStore.layer,
+      ProcessRunner.layer,
+      layerThreadRoles,
       layerThreadLaunchProvided,
       layerThreadManagementProvided,
       layerProjectService,
