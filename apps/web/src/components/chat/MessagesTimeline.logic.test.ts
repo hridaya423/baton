@@ -5022,6 +5022,59 @@ it.each([
   );
 });
 
+it("keeps an HTML render visible when its wake-up group is collapsed", () => {
+  const fixture = makeStreamingTimelineFixture("Update received");
+  const htmlRender = { attachmentId: "wake-render-html", title: "Directions", height: 400 };
+  const entries = deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: fixture.visibleTurnItems.map((row) => ({
+      ...row,
+      item:
+        row.item.type === "user_message"
+          ? {
+              ...row.item,
+              type: "notification",
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            }
+          : row.item.type === "command_execution"
+            ? { ...row.item, status: "completed", exitCode: 0, output: "Passed" }
+            : row.item.type === "dynamic_tool"
+              ? {
+                  ...row.item,
+                  status: "completed",
+                  toolName: "mcp__t3-code__html_render",
+                  output: { structuredContent: { htmlRender }, content: [] },
+                }
+              : row.item.type === "assistant_message"
+                ? { ...row.item, streaming: false, status: "completed" }
+                : row.item,
+    })),
+    optimisticMessages: [],
+  });
+  const input = {
+    timelineEntries: entries,
+    latestRun: {
+      runId: fixture.runId,
+      status: "completed" as const,
+      startedAt: fixture.time(5),
+      completedAt: fixture.time(8),
+    },
+    isWorking: false,
+    activeTurnStartedAt: fixture.time(5),
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+    hasPendingRequest: false,
+    hasThreadError: false,
+  };
+  const original = applyWorkingWindow(deriveMessagesTimelineRows(input), input);
+  const renders = original.filter((row) => row.kind === "html-render");
+  expect(renders).toHaveLength(1);
+  const collapsed = applyBackgroundActivityGroups(original, input);
+  expect(collapsed[0]).toMatchObject({ kind: "background-activity", expanded: false });
+  expect(collapsed.filter((row) => row.kind === "html-render")).toEqual(renders);
+});
+
 it.each([
   "user",
   "approval",

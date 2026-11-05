@@ -3054,15 +3054,16 @@ export function applyBackgroundActivityGroups(
           row.message.role === "assistant" &&
           (row.message.runId === activeRunId || !row.message.streaming),
       );
-      if (finalAnswer?.kind === "message") {
-        result.push(
-          ...groupRows.filter(
-            (row) =>
-              row === finalAnswer ||
-              (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id),
-          ),
-        );
-      }
+      result.push(
+        ...groupRows.filter(
+          (row) =>
+            row.kind === "html-render" ||
+            row.kind === "mcp-app" ||
+            (finalAnswer?.kind === "message" &&
+              (row === finalAnswer ||
+                (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id))),
+        ),
+      );
     }
   }
   return result;
