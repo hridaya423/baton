@@ -131,9 +131,7 @@ const withIdentity = <A, E, R>(
             exists: (path) =>
               input.legacyPathProbeError
                 ? Effect.fail(input.legacyPathProbeError)
-                : Effect.succeed(
-                    input.legacyPathExists === true && /T3 Code \((Alpha|Dev)\)/.test(path),
-                  ),
+                : Effect.succeed(input.legacyPathExists === true && /Baton \(Dev\)/.test(path)),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
           }),
@@ -153,7 +151,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/t3code-v2");
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/baton");
       }),
       { legacyPathExists: true },
     ),
@@ -165,7 +163,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         assert.equal(
           yield* identity.resolveUserDataPath,
-          "/Users/alice/Library/Application Support/T3 Code (Dev)",
+          "/Users/alice/Library/Application Support/Baton (Dev)",
         );
       }),
       {
@@ -176,16 +174,18 @@ describe("DesktopAppIdentity", () => {
   );
 
   it.effect.each([
-    { stage: "Beta", environment: {} },
+    { stage: "Beta", name: "Baton", environment: {} },
     {
       stage: "Nightly",
+      name: "Baton (Nightly)",
       environment: { appVersion: "0.0.43-nightly.20260929.2428" },
     },
     {
       stage: "Dev",
+      name: "Baton (Dev)",
       environment: { env: { VITE_DEV_SERVER_URL: "http://localhost:5173" } },
     },
-  ])("uses a valid native User-Agent product name for $stage", ({ stage, environment }) => {
+  ])("uses a valid native User-Agent product name for $stage", ({ name, environment }) => {
     const calls: ElectronAppCalls = {
       setAboutPanelOptions: [],
       setDockIcon: [],
@@ -199,9 +199,9 @@ describe("DesktopAppIdentity", () => {
 
         const runtimeName = calls.setName[0];
         assert.isDefined(runtimeName);
-        assert.equal(runtimeName, `T3 Code ${stage}`);
+        assert.equal(runtimeName, name.replaceAll(/[()]/gu, ""));
         assert.match(runtimeName.replaceAll(" ", ""), /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, `T3 Code (${stage})`);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, name);
       }),
       { calls, environment },
     );

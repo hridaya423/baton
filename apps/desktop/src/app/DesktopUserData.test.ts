@@ -6,7 +6,7 @@ import * as Path from "effect/Path";
 
 import { resolveUserDataPath } from "./DesktopUserData.ts";
 
-it.effect.each(["t3code", "T3 Code (Alpha)"])(
+it.effect.each(["t3code"])(
   "preserves Windows credential keys from %s without copying browser databases",
   (sourceName) =>
     Effect.gen(function* () {
@@ -14,7 +14,7 @@ it.effect.each(["t3code", "T3 Code (Alpha)"])(
       const path = yield* Path.Path;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-profile-" });
       const source = path.join(directory, sourceName);
-      const destination = path.join(directory, "t3code-v2");
+      const destination = path.join(directory, "baton");
       const state = '{"os_crypt":{"encrypted_key":"test-encrypted-key"}}';
       yield* fs.makeDirectory(path.join(directory, "T3 Code (Alpha)"), { recursive: true });
       yield* fs.makeDirectory(path.join(source, "IndexedDB"), { recursive: true });

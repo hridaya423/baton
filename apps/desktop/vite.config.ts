@@ -1,6 +1,7 @@
 import "vite-plus/test/config";
 import { defaultInclude, defineConfig } from "vite-plus";
 
+import { batonBrandPlugin } from "../../scripts/lib/baton-brand.ts";
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
@@ -56,6 +57,7 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
+      plugins: [batonBrandPlugin()],
       outputOptions: { codeSplitting: false },
       entry: ["src/main.ts"],
       clean: true,

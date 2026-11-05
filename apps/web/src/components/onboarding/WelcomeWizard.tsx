@@ -39,7 +39,6 @@ import { useEffect, useRef, useState } from "react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
-import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import {
@@ -244,7 +243,7 @@ export function WelcomeWizard({
             <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
               <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Code
+                Baton
               </span>
             </div>
           }
@@ -444,18 +443,7 @@ function ConnectionStep({
       ) : null}
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read
-          more about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""},
-          see our{" "}
-          <a
-            className="underline underline-offset-2 hover:text-foreground"
-            href={PRIVACY_POLICY_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            privacy policy
-          </a>
-          .
+          {telemetryOff ?? "Baton sends no usage data."}
         </p>
         <Button
           className="shrink-0 self-end"

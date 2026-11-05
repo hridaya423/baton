@@ -18,6 +18,7 @@ import {
   DEV_PROXIED_PATH_PREFIXES,
 } from "@t3tools/shared/devProxy";
 
+import { batonBrandPlugin } from "../../scripts/lib/baton-brand";
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
@@ -266,6 +267,7 @@ export default defineConfig(() => {
     },
     assetsInclude: ["**/*.wasm"],
     plugins: [
+      batonBrandPlugin(),
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),
       builtDev
