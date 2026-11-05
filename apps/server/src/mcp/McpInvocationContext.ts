@@ -30,7 +30,7 @@ export interface McpThreadCaller {
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
   /** Set per request from the captain tables; it only decides which tools the caller sees. */
-  readonly role?: "captain" | "crew";
+  readonly role?: "captain" | "crew" | "reviewer";
 }
 
 export interface McpClientCaller {
@@ -174,6 +174,9 @@ export const visibleToCaptains = (): boolean => callerRole() === "captain";
 
 /** `McpSchema.EnabledWhen` for the tools only a crew thread sees. */
 export const visibleToCrew = (): boolean => callerRole() === "crew";
+
+/** `McpSchema.EnabledWhen` for the tools only a reviewer thread sees. */
+export const visibleToReviewers = (): boolean => callerRole() === "reviewer";
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
   ? PreviewAutomationUnavailableError

@@ -1,6 +1,10 @@
 import {
   CaptainMcpCrewReportInput,
   CaptainMcpCrewReportResult,
+  CaptainMcpEscalateInput,
+  CaptainMcpEscalateResult,
+  CaptainMcpOrderAnswerInput,
+  CaptainMcpOrderAnswerResult,
   CaptainMcpOrderCreateInput,
   CaptainMcpOrderCreateResult,
   CaptainMcpOrderDropInput,
@@ -8,8 +12,12 @@ import {
   CaptainMcpOrderListResult,
   CaptainMcpOrderReadInput,
   CaptainMcpOrderReadResult,
+  CaptainMcpOrderRetryInput,
+  CaptainMcpOrderRetryResult,
   CaptainMcpOrderSendInput,
   CaptainMcpOrderSendResult,
+  CaptainMcpReviewSubmitInput,
+  CaptainMcpReviewSubmitResult,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
@@ -90,6 +98,58 @@ const OrderDropTool = Tool.make("order_drop", {
   .annotate(Tool.Idempotent, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToCaptains);
 
+const OrderAnswerTool = Tool.make("order_answer", {
+  description:
+    "Answer a crew's question. It reaches the crew and closes any open decision for that order. Ask the user first when the answer is not yours to give.",
+  parameters: CaptainMcpOrderAnswerInput,
+  success: CaptainMcpOrderAnswerResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Answer a crew")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToCaptains);
+
+const OrderRetryTool = Tool.make("order_retry", {
+  description:
+    "Stop an order's crew turn and send it a revised brief, or the original, in the same thread and worktree. Counts as a retry.",
+  parameters: CaptainMcpOrderRetryInput,
+  success: CaptainMcpOrderRetryResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Retry an order")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToCaptains);
+
+const EscalateTool = Tool.make("escalate", {
+  description:
+    "Open a needs-you item for the user: a decision, a one-way door, a budget or a conflict. Then say it in one line with the choices.",
+  parameters: CaptainMcpEscalateInput,
+  success: CaptainMcpEscalateResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Ask the user")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToCaptains);
+
+const ReviewSubmitTool = Tool.make("review_submit", {
+  description:
+    "Submit your review of the order you were asked to review: approve, or reject with findings (severity, file, line, the scenario that breaks). Call it once, last.",
+  parameters: CaptainMcpReviewSubmitInput,
+  success: CaptainMcpReviewSubmitResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Submit a review")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToReviewers);
+
 const CrewReportTool = Tool.make("crew_report", {
   description:
     "Report on your order. `done` when finished (add `reportMd` for a report order). `blocked` with `asks` when stuck. Do not wait silently.",
@@ -109,5 +169,9 @@ export const CaptainToolkit = Toolkit.make(
   OrderReadTool,
   OrderSendTool,
   OrderDropTool,
+  OrderAnswerTool,
+  OrderRetryTool,
+  EscalateTool,
   CrewReportTool,
+  ReviewSubmitTool,
 );

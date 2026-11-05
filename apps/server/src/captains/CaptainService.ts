@@ -3,12 +3,18 @@ import {
   CaptainError,
   type CaptainCreateInput,
   type CaptainCrewReportStatus,
+  type CaptainEscalation,
+  CaptainEscalationId,
+  type CaptainEscalationKind,
   type CaptainId,
   type CaptainListInput,
   type CaptainMcpCrewReportInput,
   type CaptainMcpOrderCreateInput,
+  type CaptainMcpReviewSubmitInput,
   type CaptainOrder,
   CaptainOrderId,
+  type CaptainReview,
+  type CaptainVerifyResult,
   CommandId,
   DEFAULT_CAPTAIN_CHARTER,
   MessageId,
@@ -17,18 +23,23 @@ import {
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  T3_CODE_CAPTAIN_ROLE_INSTRUCTIONS,
+  t3CrewRoleInstructions,
+  t3ReviewerRoleInstructions,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 
@@ -36,41 +47,89 @@ import * as ServerConfig from "../config.ts";
 import { runtimeModeRank } from "../mcp/delegatedTaskModes.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadRoles from "../orchestration-v2/ThreadRoles.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { CAPTAIN_INSTRUCTIONS, crewInstructions } from "./captainInstructions.ts";
 import * as CaptainStore from "./CaptainStore.ts";
+import {
+  REVIEW_DIFF_MAX_BYTES,
+  reviewRejectedMessage,
+  reviewerBrief,
+  verifyFailedMessage,
+} from "./captainMessages.ts";
 import { selectAdmissions, slug } from "./OrderPlanner.ts";
+import { pickReviewer } from "./ReviewerModels.ts";
+import { holdsStall, stallLevelFor } from "./StallRules.ts";
+import { runDoneCheck } from "./Verifier.ts";
 
 export type CaptainRole =
   | { readonly role: "captain"; readonly captainId: CaptainId }
-  | { readonly role: "crew"; readonly captainId: CaptainId; readonly orderId: CaptainOrderId };
+  | { readonly role: "crew"; readonly captainId: CaptainId; readonly orderId: CaptainOrderId }
+  | { readonly role: "reviewer"; readonly captainId: CaptainId; readonly orderId: CaptainOrderId };
 
-export type CrewSignal = {
-  readonly captainId: CaptainId;
-  readonly order: CaptainOrder;
-  readonly key: string;
-} & (
+export type CrewSignal =
   | {
       readonly kind: "report";
+      readonly captainId: CaptainId;
+      readonly order: CaptainOrder;
+      readonly key: string;
       readonly status: CaptainCrewReportStatus;
       readonly summary: string;
       readonly asks: ReadonlyArray<string>;
     }
-  | { readonly kind: "launch_failed"; readonly reason: string }
-);
+  | {
+      readonly kind: "launch_failed";
+      readonly captainId: CaptainId;
+      readonly order: CaptainOrder;
+      readonly key: string;
+      readonly reason: string;
+    }
+  | {
+      readonly kind: "note";
+      readonly captainId: CaptainId;
+      readonly order: CaptainOrder | null;
+      readonly key: string;
+      readonly text: string;
+    };
 
 export interface CrewOf {
   readonly captain: Captain;
   readonly order: CaptainOrder;
 }
 
+export interface OpenEscalationInput {
+  readonly captainId: CaptainId;
+  readonly orderId: CaptainOrderId | null;
+  readonly kind: CaptainEscalationKind;
+  readonly summary: string;
+  readonly detail: string;
+  readonly options: ReadonlyArray<string>;
+  readonly requestId?: string;
+  /** False when the opener already told the captain. */
+  readonly wake: boolean;
+}
+
 const CREW_MD_MAX_CHARS = 8_000;
 const READ_MESSAGE_LIMIT = 5;
 const READ_MESSAGE_MAX_CHARS = 1_500;
 const NEVER_DUE_MS = Number.MAX_SAFE_INTEGER;
+const STALL_RECHECK_MS = 60_000;
+const CLAIM_TTL_MS = 3 * 60 * 60 * 1_000;
+const REVIEW_REPROMPT =
+  "You finished without calling review_submit. Call it now with your verdict: approve, or reject with your findings.";
+const WORK_STATES = ["running", "verifying", "verify_failed", "reviewing"] as const;
+
+const approvalDecision = (resolution: string): "accept" | "decline" | undefined => {
+  if (/^\s*(approve|approved|accept|yes)\b/i.test(resolution)) return "accept";
+  if (/^\s*(deny|denied|decline|reject|no)\b/i.test(resolution)) return "decline";
+  return undefined;
+};
+
+const times = (count: number) => (count === 2 ? "twice" : `${count} times`);
 
 export class CaptainService extends Context.Service<
   CaptainService,
@@ -86,6 +145,7 @@ export class CaptainService extends Context.Service<
       options?: { readonly active: true },
     ) => Effect.Effect<Captain, CaptainError>;
     readonly requireCrew: (threadId: ThreadId) => Effect.Effect<CrewOf, CaptainError>;
+    readonly requireReviewer: (threadId: ThreadId) => Effect.Effect<CrewOf, CaptainError>;
     readonly crewOf: (threadId: ThreadId) => Effect.Effect<Option.Option<CrewOf>, CaptainError>;
     readonly createOrder: (input: {
       readonly captain: Captain;
@@ -115,6 +175,22 @@ export class CaptainService extends Context.Service<
       { readonly delivery: "started" | "queued" | "steered" | "restarted" },
       CaptainError
     >;
+    readonly answerOrder: (input: {
+      readonly captain: Captain;
+      readonly orderId: CaptainOrderId;
+      readonly text: string;
+    }) => Effect.Effect<
+      {
+        readonly delivery: "started" | "queued" | "steered" | "restarted";
+        readonly resolved: number;
+      },
+      CaptainError
+    >;
+    readonly retryOrder: (input: {
+      readonly captain: Captain;
+      readonly orderId: CaptainOrderId;
+      readonly brief: string | undefined;
+    }) => Effect.Effect<CaptainOrder, CaptainError>;
     readonly dropOrder: (input: {
       readonly captain: Captain;
       readonly orderId: CaptainOrderId;
@@ -124,7 +200,33 @@ export class CaptainService extends Context.Service<
       readonly threadId: ThreadId;
       readonly report: CaptainMcpCrewReportInput;
     }) => Effect.Effect<CaptainOrder, CaptainError>;
+    readonly submitReview: (input: {
+      readonly threadId: ThreadId;
+      readonly review: CaptainMcpReviewSubmitInput;
+    }) => Effect.Effect<CaptainOrder, CaptainError>;
+    readonly reviewerEnded: (threadId: ThreadId) => Effect.Effect<void, CaptainError>;
+    readonly openEscalation: (
+      input: OpenEscalationInput,
+    ) => Effect.Effect<CaptainEscalation, CaptainError>;
+    readonly escalate: (input: {
+      readonly captain: Captain;
+      readonly orderId: CaptainOrderId | undefined;
+      readonly kind: CaptainEscalationKind;
+      readonly summary: string;
+      readonly detail: string | undefined;
+      readonly options: ReadonlyArray<string> | undefined;
+    }) => Effect.Effect<CaptainEscalation, CaptainError>;
+    readonly listEscalations: (input: {
+      readonly captainId?: CaptainId | undefined;
+      readonly status?: "open" | "resolved" | undefined;
+    }) => Effect.Effect<ReadonlyArray<CaptainEscalation>, CaptainError>;
+    readonly resolveEscalation: (input: {
+      readonly escalationId: CaptainEscalationId;
+      readonly resolution: string;
+    }) => Effect.Effect<CaptainEscalation, CaptainError>;
     readonly touchActivity: (orderId: CaptainOrderId) => Effect.Effect<void, CaptainError>;
+    /** Runs everything due now and waits for the verifications and reviewer launches it starts. */
+    readonly drain: Effect.Effect<void, CaptainError>;
     readonly subscribeSignals: Effect.Effect<PubSub.Subscription<CrewSignal>, never, Scope.Scope>;
   }
 >()("t3/captains/CaptainService") {}
@@ -140,21 +242,19 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const threadRoles = yield* ThreadRoles.ThreadRoles;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const scope = yield* Effect.scope;
 
-  const roles = yield* Ref.make<ReadonlyMap<ThreadId, CaptainRole>>(new Map());
   const signals = yield* PubSub.unbounded<CrewSignal>();
-  const admissionPermit = yield* Semaphore.make(1);
-  const admissionDue = DueHint.make();
-
-  const setRole = (threadId: ThreadId, role: CaptainRole | undefined) =>
-    Ref.update(roles, (current) => {
-      const next = new Map(current);
-      if (role === undefined) next.delete(threadId);
-      else next.set(threadId, role);
-      return next;
-    });
+  const permit = yield* Semaphore.make(1);
+  const due = DueHint.make();
+  const workFibers = new Map<CaptainOrderId, Fiber.Fiber<void>>();
+  const kicked = new Map<symbol, Fiber.Fiber<void>>();
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+  const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
   const newId = random.uuidV4();
 
   const threadFailure = (threadId: ThreadId) => (cause: unknown) =>
@@ -165,6 +265,42 @@ const make = Effect.gen(function* () {
 
   const dispatch = (threadId: ThreadId, command: Parameters<typeof threads.dispatch>[0]) =>
     threads.dispatch(command).pipe(Effect.mapError(threadFailure(threadId)));
+
+  const assignRole = (
+    threadId: ThreadId,
+    role: CaptainRole,
+    instructions: string,
+  ): Effect.Effect<void> =>
+    threadRoles.set(threadId, {
+      role: role.role,
+      captainId: role.captainId,
+      ...(role.role === "captain" ? {} : { orderId: role.orderId }),
+      instructions,
+    });
+
+  const clearRole = (threadId: ThreadId) => threadRoles.set(threadId, undefined);
+
+  const crewRole = (captain: Captain, order: CaptainOrder) =>
+    assignRole(
+      order.threadId as ThreadId,
+      { role: "crew", captainId: captain.id, orderId: order.id },
+      t3CrewRoleInstructions({
+        captainName: captain.name,
+        orderId: order.id,
+        kind: order.kind,
+        doneCheck: order.doneCheck,
+      }),
+    );
+
+  const reviewerRole = (captain: Captain, order: CaptainOrder, threadId: ThreadId) =>
+    assignRole(
+      threadId,
+      { role: "reviewer", captainId: captain.id, orderId: order.id },
+      t3ReviewerRoleInstructions({ captainName: captain.name, orderId: order.id }),
+    );
+
+  const note = (captain: Captain, order: CaptainOrder | null, key: string, text: string) =>
+    PubSub.publish(signals, { kind: "note", captainId: captain.id, order, key, text });
 
   const requireCaptain: CaptainService["Service"]["requireCaptain"] = Effect.fn(
     "CaptainService.requireCaptain",
@@ -201,6 +337,27 @@ const make = Effect.gen(function* () {
         error._tag === "CaptainError" ? error : new CaptainError({ reason: "not_crew", threadId }),
       ),
     );
+  });
+
+  const requireReviewer: CaptainService["Service"]["requireReviewer"] = Effect.fn(
+    "CaptainService.requireReviewer",
+  )(function* (threadId) {
+    const entry = yield* threadRoles.get(threadId);
+    const notReviewer = new CaptainError({ reason: "not_reviewer", threadId });
+    if (entry?.role !== "reviewer" || entry.orderId === undefined) return yield* notReviewer;
+    const order = yield* store.getOrder(entry.orderId);
+    const captain = yield* store.getCaptain(entry.captainId);
+    if (
+      Option.isNone(order) ||
+      Option.isNone(captain) ||
+      order.value.state !== "reviewing" ||
+      order.value.review === null ||
+      order.value.review.threadId !== threadId ||
+      order.value.review.finishedAt !== null
+    ) {
+      return yield* notReviewer;
+    }
+    return { captain: captain.value, order: order.value };
   });
 
   const resolveBaseRef = Effect.fn("CaptainService.resolveBaseRef")(function* (cwd: string) {
@@ -242,7 +399,6 @@ const make = Effect.gen(function* () {
       order.brief,
       ...(crewMd === undefined ? [] : [`Standing orders (CREW.md):\n${crewMd}`]),
       ...(built.length === 0 ? [] : [`Finished orders you build on:\n${built.join("\n")}`]),
-      crewInstructions(captain.name, order),
     ].join("\n\n");
   });
 
@@ -267,8 +423,8 @@ const make = Effect.gen(function* () {
       to: "dropped",
       at,
     });
-    if (order.threadId !== null) yield* setRole(order.threadId, undefined);
-    yield* admissionDue.invalidate;
+    if (order.threadId !== null) yield* clearRole(order.threadId);
+    yield* due.invalidate;
     yield* PubSub.publish(signals, {
       kind: "launch_failed",
       captainId: captain.id,
@@ -308,8 +464,9 @@ const make = Effect.gen(function* () {
     const at = yield* nowIso;
     const claimed = yield* store.claimOrder({ orderId: order.id, threadId, branch, baseRef, at });
     if (!claimed) return;
-    yield* setRole(threadId, { role: "crew", captainId: captain.id, orderId: order.id });
-    yield* admissionDue.invalidate;
+    const crewing = { ...order, threadId, branch, baseRef, state: "running" as const };
+    yield* crewRole(captain, crewing);
+    yield* due.invalidate;
     const text = yield* crewMessage(captain, order, orders);
     yield* launches
       .launch({
@@ -358,11 +515,517 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const admitAll = admissionPermit.withPermits(1)(
+  const admitNow = (captain: Captain) =>
+    permit
+      .withPermits(1)(admitCaptain(captain))
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("captain admission failed", { captainId: captain.id, cause }),
+        ),
+      );
+
+  const sendFollowUp = Effect.fn("CaptainService.sendFollowUp")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    text: string,
+    key: string,
+  ) {
+    if (order.threadId === null) {
+      return yield* new CaptainError({
+        reason: "crew_not_running",
+        captainId: captain.id,
+        orderId: order.id,
+      });
+    }
+    const crewThreadId = order.threadId;
+    return yield* threads
+      .sendToThread({
+        projectId: captain.projectId,
+        commandId: CommandId.make(`server:captain-followup:${key}`),
+        threadId: crewThreadId,
+        messageId: MessageId.make(`message:captain-followup:${key}`),
+        senderThreadId: captain.threadId,
+        text,
+        attachments: [],
+        mode: "queue",
+        createdBy: "agent",
+        creationSource: "server",
+      })
+      .pipe(Effect.mapError(threadFailure(crewThreadId)));
+  });
+
+  const openEscalation: CaptainService["Service"]["openEscalation"] = Effect.fn(
+    "CaptainService.openEscalation",
+  )(function* (input) {
+    const existing = yield* store.findOpenEscalation({
+      captainId: input.captainId,
+      orderId: input.orderId,
+      kind: input.kind,
+      requestId: input.requestId ?? null,
+    });
+    if (Option.isSome(existing)) return existing.value;
+    const escalation: CaptainEscalation = {
+      id: CaptainEscalationId.make(`escalation:${yield* newId}`),
+      captainId: input.captainId,
+      orderId: input.orderId,
+      kind: input.kind,
+      summary: input.summary,
+      detail: input.detail,
+      options: input.options,
+      status: "open",
+      resolution: null,
+      requestId: (input.requestId ?? null) as CaptainEscalation["requestId"],
+      createdAt: yield* nowIso,
+      resolvedAt: null,
+    };
+    yield* store.insertEscalation(escalation);
+    if (input.wake) {
+      const captain = yield* store.getCaptain(input.captainId);
+      const order = input.orderId === null ? Option.none() : yield* store.getOrder(input.orderId);
+      if (Option.isSome(captain)) {
+        yield* note(
+          captain.value,
+          Option.getOrNull(order),
+          `escalation:${escalation.id}`,
+          `needs you: ${input.summary}`,
+        );
+      }
+    }
+    return escalation;
+  });
+
+  const settleFailedGate = Effect.fn("CaptainService.settleFailedGate")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    label: string,
+  ) {
+    if (order.pendingFollowUp === null) return;
+    yield* sendFollowUp(captain, order, order.pendingFollowUp, `${order.id}:${order.retries}`);
+    const moved = yield* store.patchOrder({
+      orderId: order.id,
+      from: ["verify_failed"],
+      at: yield* nowIso,
+      state: "running",
+      pendingFollowUp: null,
+    });
+    if (moved) {
+      yield* note(captain, order, `gate:${order.id}:${order.retries}:sent-back`, label);
+    }
+  });
+
+  const retryLimitEscalation = (
+    captain: Captain,
+    order: CaptainOrder,
+    what: string,
+    detail: string,
+  ) =>
+    openEscalation({
+      captainId: captain.id,
+      orderId: order.id,
+      kind: "retry_limit",
+      summary: `${order.title}: ${what}`,
+      detail,
+      options: ["order_retry with a new brief", "order_drop"],
+      wake: false,
+    });
+
+  const verifyFailureDetail = (verify: CaptainVerifyResult) =>
+    `Command: ${verify.cmd}\nExit code: ${verify.exit === null ? "none" : verify.exit}\n${verify.logTail}`;
+
+  const applyVerification = Effect.fn("CaptainService.applyVerification")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    verify: CaptainVerifyResult,
+  ) {
+    const at = yield* nowIso;
+    if (verify.exit === 0) {
+      const to = order.kind === "change" ? "reviewing" : "done";
+      const moved = yield* store.patchOrder({
+        orderId: order.id,
+        from: ["verifying"],
+        at,
+        state: to,
+        verify,
+      });
+      if (!moved) return;
+      yield* note(captain, order, `verify:${order.id}:${order.retries}:pass`, "verify passed");
+      yield* to === "done" ? admitNow(captain) : kick;
+      return;
+    }
+    const retries = order.retries + 1;
+    const exhausted = retries > captain.charter.retryLimit;
+    const failed = { ...order, retries, verify };
+    const moved = yield* store.patchOrder({
+      orderId: order.id,
+      from: ["verifying"],
+      at,
+      state: "verify_failed",
+      retries,
+      verify,
+      pendingFollowUp: exhausted ? null : verifyFailedMessage(verify),
+    });
+    if (!moved) return;
+    const exit = verify.exit === null ? "no exit code" : `exit ${verify.exit}`;
+    if (exhausted) {
+      yield* note(
+        captain,
+        order,
+        `verify:${order.id}:${retries}:limit`,
+        `verify failed ${times(retries)}, needs you`,
+      );
+      yield* retryLimitEscalation(
+        captain,
+        order,
+        `verify failed ${times(retries)}`,
+        verifyFailureDetail(verify),
+      );
+      return;
+    }
+    yield* settleFailedGate(
+      captain,
+      { ...failed, pendingFollowUp: verifyFailedMessage(verify) },
+      `verify failed (${exit}), sent back`,
+    );
+  });
+
+  const crewCwd = Effect.fn("CaptainService.crewCwd")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+  ) {
+    const shell = order.threadId === null ? null : yield* getShell(order.threadId);
+    if (shell?.worktreePath != null) return shell.worktreePath;
+    const project = yield* projects
+      .getById(captain.projectId)
+      .pipe(Effect.mapError(threadFailure(captain.threadId)));
+    return Option.isSome(project) ? project.value.workspaceRoot : undefined;
+  });
+
+  const runVerification = Effect.fn("CaptainService.runVerification")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+  ) {
+    const cmd = order.doneCheck;
+    const cwd = yield* crewCwd(captain, order);
+    const timeoutMs = (captain.charter.verifyTimeoutMinutes ?? 10) * 60_000;
+    const verify =
+      cmd === null
+        ? undefined
+        : cwd === undefined
+          ? ({
+              cmd,
+              exit: null,
+              logTail: "The crew has no worktree to run the check in.",
+              startedAt: yield* nowIso,
+              finishedAt: yield* nowIso,
+            } satisfies CaptainVerifyResult)
+          : yield* runDoneCheck({ cmd, cwd, timeoutMs }).pipe(
+              Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+            );
+    if (verify !== undefined) yield* applyVerification(captain, order, verify);
+  });
+
+  const trackWork = Effect.fn("CaptainService.trackWork")(function* <E>(
+    orderId: CaptainOrderId,
+    work: Effect.Effect<void, E>,
+  ) {
+    const fiber = yield* work.pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("captain order work failed", { orderId, cause }),
+      ),
+      Effect.ensuring(Effect.sync(() => workFibers.delete(orderId))),
+      Effect.forkIn(scope),
+    );
+    workFibers.set(orderId, fiber);
+  });
+
+  const cancelWork = (orderId: CaptainOrderId) =>
+    Effect.suspend(() => {
+      const fiber = workFibers.get(orderId);
+      workFibers.delete(orderId);
+      return fiber === undefined ? Effect.void : Fiber.interrupt(fiber);
+    });
+
+  const agentsMdOf = (cwd: string) =>
+    fileSystem
+      .readFileString(path.join(cwd, "AGENTS.md"))
+      .pipe(Effect.orElseSucceed(() => undefined));
+
+  const diffOf = Effect.fn("CaptainService.diffOf")(function* (
+    cwd: string,
+    baseRef: string,
+    branch: string,
+  ) {
+    const range = `${baseRef}...${branch}`;
+    const full = yield* git
+      .execute({
+        operation: "CaptainService.reviewDiff",
+        cwd,
+        args: ["diff", "--no-color", range],
+        maxOutputBytes: REVIEW_DIFF_MAX_BYTES,
+        appendTruncationMarker: true,
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.result);
+    if (full._tag === "Failure") return { unreadable: full.failure.message };
+    if (full.success.exitCode !== 0) {
+      return { unreadable: full.success.stderr.trim().slice(0, 300) || "git diff failed" };
+    }
+    if (!full.success.stdoutTruncated) {
+      return { text: full.success.stdout.length === 0 ? "(no changes)" : full.success.stdout };
+    }
+    const files = yield* git
+      .execute({
+        operation: "CaptainService.reviewFiles",
+        cwd,
+        args: ["diff", "--no-color", "--name-status", range],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.option);
+    return { files: Option.isSome(files) ? files.value.stdout : "(could not list the files)" };
+  });
+
+  const launchReviewer = Effect.fn("CaptainService.launchReviewer")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+  ) {
+    const previous = order.review;
+    const nextRound = previous === null || previous.finishedAt !== null;
+    const round = previous === null ? 1 : nextRound ? previous.round + 1 : previous.round;
+    const crewShell = order.threadId === null ? null : yield* getShell(order.threadId);
+    const cwd = yield* crewCwd(captain, order);
+    if (
+      crewShell === null ||
+      cwd === undefined ||
+      order.baseRef === null ||
+      order.branch === null
+    ) {
+      yield* openEscalation({
+        captainId: captain.id,
+        orderId: order.id,
+        kind: "decision",
+        summary: `${order.title}: no worktree to review`,
+        detail: "The crew thread or its worktree is gone, so no reviewer could be started.",
+        options: ["order_retry", "order_drop"],
+        wake: true,
+      });
+      return;
+    }
+    const threadId = ThreadId.make(`captain-review:${order.id}:${round}`);
+    let review: CaptainReview;
+    if (previous !== null && !nextRound) {
+      review = previous;
+      const alive = yield* getShell(review.threadId);
+      if (alive !== null) {
+        yield* reviewerRole(captain, order, review.threadId);
+        return;
+      }
+    } else {
+      const providers = yield* providerRegistry.getProviders;
+      const crewDriver = providers.find(
+        (provider) => provider.instanceId === crewShell.modelSelection.instanceId,
+      )?.driver;
+      const choice = pickReviewer({
+        crew: crewShell.modelSelection,
+        crewDriver: crewDriver ?? ("" as never),
+        configured: captain.charter.reviewModel,
+        providers,
+      });
+      const at = yield* nowIso;
+      review = {
+        round,
+        threadId,
+        model: choice.model,
+        sameProvider: choice.sameProvider,
+        verdict: null,
+        findings: [],
+        previousFindings: previous?.findings ?? [],
+        reprompted: false,
+        startedAt: at,
+        finishedAt: null,
+      };
+      const written = yield* store.patchOrder({
+        orderId: order.id,
+        from: ["reviewing"],
+        at,
+        review,
+      });
+      if (!written) return;
+    }
+    const [diff, agentsMd] = yield* Effect.all([
+      diffOf(cwd, order.baseRef, order.branch),
+      agentsMdOf(cwd),
+    ]);
+    yield* reviewerRole(captain, order, review.threadId);
+    const text = reviewerBrief({
+      captainName: captain.name,
+      orderId: order.id,
+      title: order.title,
+      brief: order.brief,
+      round: review.round,
+      baseRef: order.baseRef,
+      branch: order.branch,
+      worktreePath: cwd,
+      diff,
+      agentsMd,
+      previousFindings: review.previousFindings,
+    });
+    yield* launches
+      .launch({
+        commandId: CommandId.make(`captain-review:${order.id}:${review.round}:launch`),
+        threadId: review.threadId,
+        projectId: captain.projectId,
+        title: `Review: ${order.title}`,
+        modelSelection: review.model,
+        runtimeMode: crewShell.runtimeMode,
+        interactionMode: "default",
+        workspaceStrategy: { type: "existing_worktree", worktreePath: cwd, branch: order.branch },
+        initialMessage: {
+          messageId: MessageId.make(`captain-review:${order.id}:${review.round}:brief`),
+          senderThreadId: captain.threadId,
+          text,
+          attachments: [],
+        },
+        createdBy: "agent",
+        creationSource: "server",
+        groupedUnderThreadId: order.threadId ?? captain.threadId,
+      })
+      .pipe(
+        Effect.tapError(() => clearRole(review.threadId)),
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("captain reviewer launch failed", { orderId: order.id, cause }).pipe(
+              Effect.andThen(clearRole(review.threadId)),
+              Effect.andThen(
+                openEscalation({
+                  captainId: captain.id,
+                  orderId: order.id,
+                  kind: "decision",
+                  summary: `${order.title}: the reviewer could not be started`,
+                  detail: "Retry or drop the order. A server restart also tries the review again.",
+                  options: ["order_retry", "order_drop"],
+                  wake: true,
+                }),
+              ),
+            ),
+        ),
+      );
+  });
+
+  const processGates = Effect.fn("CaptainService.processGates")(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const staleBefore = isoAt(nowMs - CLAIM_TTL_MS);
+    const at = isoAt(nowMs);
+    const claim = (order: CaptainOrder) =>
+      store.claimWork({ orderId: order.id, state: order.state, at, staleBefore });
+    const captainOf = (order: CaptainOrder) =>
+      store
+        .getCaptain(order.captainId)
+        .pipe(Effect.map(Option.filter((c) => c.status === "active")));
+    for (const order of yield* store.listUnclaimed({ state: "verifying", staleBefore })) {
+      const captain = yield* captainOf(order);
+      if (Option.isNone(captain) || !(yield* claim(order))) continue;
+      yield* trackWork(order.id, runVerification(captain.value, order));
+    }
+    for (const order of yield* store.listUnclaimed({ state: "reviewing", staleBefore })) {
+      const captain = yield* captainOf(order);
+      if (Option.isNone(captain) || !(yield* claim(order))) continue;
+      yield* trackWork(order.id, launchReviewer(captain.value, order));
+    }
+    for (const order of yield* store.listUnclaimed({ state: "verify_failed", staleBefore })) {
+      const captain = yield* captainOf(order);
+      if (Option.isNone(captain)) continue;
+      if (order.pendingFollowUp === null) {
+        if (order.retries > captain.value.charter.retryLimit) {
+          yield* retryLimitEscalation(
+            captain.value,
+            order,
+            "out of retries",
+            order.verify === null
+              ? "A reviewer rejected the change."
+              : verifyFailureDetail(order.verify),
+          );
+        }
+        continue;
+      }
+      if (!(yield* claim(order))) continue;
+      yield* trackWork(
+        order.id,
+        settleFailedGate(captain.value, order, "sent back after a failed check").pipe(
+          Effect.ensuring(
+            store
+              .patchOrder({
+                orderId: order.id,
+                from: ["verify_failed"],
+                at,
+                releaseClaim: true,
+              })
+              .pipe(Effect.ignore),
+          ),
+        ),
+      );
+    }
+  });
+
+  const processStalls = Effect.fn("CaptainService.processStalls")(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    let nextDueMs = NEVER_DUE_MS;
+    const captains = new Map<CaptainId, Captain>();
+    for (const order of yield* store.listInState("running")) {
+      let captain = captains.get(order.captainId);
+      if (captain === undefined) {
+        const found = yield* store.getCaptain(order.captainId);
+        if (Option.isNone(found)) continue;
+        captain = found.value;
+        captains.set(captain.id, captain);
+      }
+      if (captain.status !== "active") continue;
+      const stallMs = captain.charter.stallMinutes * 60_000;
+      const idleMs = nowMs - Date.parse(order.lastActivityAt);
+      const shell = order.threadId === null ? null : yield* getShell(order.threadId);
+      const held = shell !== null && holdsStall(shell);
+      const level = held ? 0 : stallLevelFor(idleMs, stallMs);
+      if (level !== order.stallLevel) {
+        const moved = yield* store.patchOrder({
+          orderId: order.id,
+          from: ["running"],
+          at: isoAt(nowMs),
+          stallLevel: level,
+        });
+        if (moved && level === 1) {
+          yield* note(
+            captain,
+            order,
+            `stall:${order.id}:${order.lastActivityAt}:1`,
+            `stalled for ${captain.charter.stallMinutes}m`,
+          );
+        }
+        if (moved && level === 2) {
+          yield* openEscalation({
+            captainId: captain.id,
+            orderId: order.id,
+            kind: "stall",
+            summary: `${order.title}: no activity for ${2 * captain.charter.stallMinutes}m`,
+            detail: "The crew has done nothing for two stall windows in a row.",
+            options: ["order_send a nudge", "order_retry", "order_drop"],
+            wake: true,
+          });
+        }
+      }
+      const lastActivityMs = Date.parse(order.lastActivityAt);
+      nextDueMs = Math.min(
+        nextDueMs,
+        level === 2 && !held ? nowMs + STALL_RECHECK_MS : lastActivityMs + (level + 1) * stallMs,
+        ...(level > 0 || held ? [nowMs + STALL_RECHECK_MS] : []),
+      );
+    }
+    return Math.max(nextDueMs, nowMs + 1_000);
+  });
+
+  const pass = permit.withPermits(1)(
     Effect.gen(function* () {
-      const nowMs = yield* Clock.currentTimeMillis;
-      if (yield* admissionDue.isIdle(nowMs)) return;
-      const version = yield* admissionDue.version;
       const captains = yield* store.listCaptains({});
       for (const captain of captains) {
         yield* admitCaptain(captain).pipe(
@@ -371,18 +1034,40 @@ const make = Effect.gen(function* () {
           ),
         );
       }
-      yield* admissionDue.record(version, NEVER_DUE_MS, nowMs);
+      yield* processGates();
+      return yield* processStalls();
     }),
   );
 
-  const admitNow = (captain: Captain) =>
-    admissionPermit
-      .withPermits(1)(admitCaptain(captain))
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("captain admission failed", { captainId: captain.id, cause }),
-        ),
-      );
+  const processDue = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (yield* due.isIdle(nowMs)) return;
+    const version = yield* due.version;
+    const nextDueMs = yield* pass;
+    yield* due.record(version, nextDueMs, nowMs);
+  });
+
+  const kick: Effect.Effect<void> = Effect.gen(function* () {
+    yield* due.invalidate;
+    const token = Symbol("captain-kick");
+    const fiber = yield* processDue.pipe(
+      Effect.catchCause((cause) => Effect.logWarning("captain pass failed", { cause })),
+      Effect.ensuring(Effect.sync(() => kicked.delete(token))),
+      Effect.forkIn(scope),
+    );
+    kicked.set(token, fiber);
+  });
+
+  const drain: CaptainService["Service"]["drain"] = Effect.gen(function* () {
+    for (;;) {
+      yield* pass;
+      const pending = [...new Set([...kicked.values(), ...workFibers.values()])];
+      if (pending.length === 0) return;
+      yield* Effect.forEach(pending, Fiber.await, { discard: true });
+      for (const [key, fiber] of kicked) if (pending.includes(fiber)) kicked.delete(key);
+      for (const [key, fiber] of workFibers) if (pending.includes(fiber)) workFibers.delete(key);
+    }
+  });
 
   const create: CaptainService["Service"]["create"] = Effect.fn("CaptainService.create")(
     function* (input) {
@@ -393,8 +1078,8 @@ const make = Effect.gen(function* () {
       if (shell.lineage.relationshipToParent === "subagent") {
         return yield* new CaptainError({ reason: "thread_is_subagent", threadId: input.threadId });
       }
-      const current = (yield* Ref.get(roles)).get(input.threadId);
-      if (current?.role === "crew") {
+      const current = yield* threadRoles.get(input.threadId);
+      if (current?.role === "crew" || current?.role === "reviewer") {
         return yield* new CaptainError({ reason: "thread_is_crew", threadId: input.threadId });
       }
       const existing = yield* store.getCaptainByThread(input.threadId);
@@ -423,8 +1108,12 @@ const make = Effect.gen(function* () {
       } else {
         yield* store.insertCaptain(captain);
       }
-      yield* setRole(captain.threadId, { role: "captain", captainId: captain.id });
-      yield* admissionDue.invalidate;
+      yield* assignRole(
+        captain.threadId,
+        { role: "captain", captainId: captain.id },
+        T3_CODE_CAPTAIN_ROLE_INSTRUCTIONS,
+      );
+      yield* due.invalidate;
       if (shell.pinnedAt == null) {
         yield* dispatch(captain.threadId, {
           type: "thread.pin",
@@ -440,23 +1129,6 @@ const make = Effect.gen(function* () {
           enabled: false,
         });
       }
-      const uuid = yield* newId;
-      yield* dispatch(captain.threadId, {
-        type: "message.dispatch",
-        commandId: CommandId.make(`server:captain-instructions:${uuid}`),
-        threadId: captain.threadId,
-        messageId: MessageId.make(`message:captain-instructions:${uuid}`),
-        text: CAPTAIN_INSTRUCTIONS,
-        notification: {
-          source: { kind: "system" },
-          outcome: "updated",
-          summary: "This thread is now a captain",
-        },
-        attachments: [],
-        dispatchMode: { type: "queue_after_active" },
-        createdBy: "agent",
-        creationSource: "server",
-      });
       return captain;
     },
   );
@@ -473,8 +1145,8 @@ const make = Effect.gen(function* () {
       if (found.value.status === "released") return found.value;
       const at = yield* nowIso;
       yield* store.setCaptainStatus({ captainId, status: "released", at });
-      yield* setRole(found.value.threadId, undefined);
-      yield* admissionDue.invalidate;
+      yield* clearRole(found.value.threadId);
+      yield* due.invalidate;
       yield* dispatch(found.value.threadId, {
         type: "queue.hold",
         commandId: CommandId.make(`server:captain-release:${yield* newId}`),
@@ -546,12 +1218,16 @@ const make = Effect.gen(function* () {
       baseRef: null,
       reportMd: null,
       lastReport: null,
+      verify: null,
+      review: null,
+      pendingFollowUp: null,
+      stallLevel: 0,
       createdAt: at,
       updatedAt: at,
       lastActivityAt: at,
     };
     yield* store.insertOrder(created);
-    yield* admissionDue.invalidate;
+    yield* due.invalidate;
     yield* admitNow(captain);
     const after = yield* store.listOrders(captain.id);
     const stored = after.find((candidate) => candidate.id === created.id) ?? created;
@@ -599,18 +1275,13 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const sendToOrder: CaptainService["Service"]["sendToOrder"] = Effect.fn(
-    "CaptainService.sendToOrder",
-  )(function* ({ captain, orderId, text, mode }) {
-    const order = yield* ownedOrder(captain, orderId);
-    if (order.state !== "running" || order.threadId === null) {
-      return yield* new CaptainError({
-        reason: "crew_not_running",
-        captainId: captain.id,
-        orderId,
-      });
-    }
-    const crewThreadId = order.threadId;
+  const sendToCrewThread = Effect.fn("CaptainService.sendToCrewThread")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    text: string,
+    mode: ThreadManagementService.ThreadManagementSendMode,
+  ) {
+    const crewThreadId = order.threadId as ThreadId;
     const uuid = yield* newId;
     const result = yield* threads
       .sendToThread({
@@ -629,11 +1300,129 @@ const make = Effect.gen(function* () {
     return { delivery: result.delivery };
   });
 
+  const requireRunningCrew = (captain: Captain, order: CaptainOrder) =>
+    order.state !== "running" || order.threadId === null
+      ? Effect.fail(
+          new CaptainError({
+            reason: "crew_not_running",
+            captainId: captain.id,
+            orderId: order.id,
+          }),
+        )
+      : Effect.void;
+
+  const sendToOrder: CaptainService["Service"]["sendToOrder"] = Effect.fn(
+    "CaptainService.sendToOrder",
+  )(function* ({ captain, orderId, text, mode }) {
+    const order = yield* ownedOrder(captain, orderId);
+    yield* requireRunningCrew(captain, order);
+    return yield* sendToCrewThread(captain, order, text, mode);
+  });
+
+  const answerOrder: CaptainService["Service"]["answerOrder"] = Effect.fn(
+    "CaptainService.answerOrder",
+  )(function* ({ captain, orderId, text }) {
+    const order = yield* ownedOrder(captain, orderId);
+    yield* requireRunningCrew(captain, order);
+    const crewThreadId = order.threadId as ThreadId;
+    const pending = yield* threads
+      .getThreadRecords(crewThreadId, ["turnItems"], { turnItemTypes: ["user_input_request"] })
+      .pipe(
+        Effect.map(({ turnItems }) =>
+          turnItems.findLast(
+            (item) => item.type === "user_input_request" && item.status === "pending",
+          ),
+        ),
+        Effect.orElseSucceed(() => undefined),
+      );
+    let delivery: "started" | "queued" | "steered" | "restarted";
+    if (pending?.type === "user_input_request") {
+      yield* dispatch(crewThreadId, {
+        type: "runtime-request.respond",
+        commandId: CommandId.make(`mcp:captain-answer:${yield* newId}`),
+        threadId: crewThreadId,
+        requestId: pending.requestId,
+        answers: Object.fromEntries(pending.questions.map((question) => [question.id, text])),
+      });
+      delivery = "steered";
+    } else {
+      delivery = (yield* sendToCrewThread(captain, order, text, "queue")).delivery;
+    }
+    const resolved = yield* store.resolveOrderEscalations({
+      orderId,
+      kind: "decision",
+      resolution: text,
+      at: yield* nowIso,
+    });
+    return { delivery, resolved: resolved.length };
+  });
+
+  const retryOrder: CaptainService["Service"]["retryOrder"] = Effect.fn(
+    "CaptainService.retryOrder",
+  )(function* ({ captain, orderId, brief }) {
+    const order = yield* ownedOrder(captain, orderId);
+    if (
+      !WORK_STATES.includes(order.state as (typeof WORK_STATES)[number]) ||
+      order.threadId === null
+    ) {
+      return yield* new CaptainError({
+        reason: "invalid_state",
+        captainId: captain.id,
+        orderId,
+        detail: `It is ${order.state}; only an order with a crew at work, under check or under review can be retried.`,
+      });
+    }
+    const crewThreadId = order.threadId;
+    const at = yield* nowIso;
+    const retries = order.retries + 1;
+    const moved = yield* store.patchOrder({
+      orderId,
+      from: WORK_STATES,
+      at,
+      state: "running",
+      retries,
+      pendingFollowUp: null,
+      stallLevel: 0,
+    });
+    if (!moved) {
+      return yield* new CaptainError({ reason: "invalid_state", captainId: captain.id, orderId });
+    }
+    yield* store.touchActivity({ orderId, at });
+    yield* cancelWork(orderId);
+    if (order.review !== null && order.review.finishedAt === null) {
+      yield* clearRole(order.review.threadId);
+      yield* threads
+        .interruptThread({
+          projectId: captain.projectId,
+          commandId: CommandId.make(`mcp:captain-retry-review:${yield* newId}`),
+          threadId: order.review.threadId,
+          reason: "The order was retried.",
+        })
+        .pipe(Effect.ignore);
+    }
+    yield* threads
+      .interruptThread({
+        projectId: captain.projectId,
+        commandId: CommandId.make(`mcp:captain-retry:${yield* newId}`),
+        threadId: crewThreadId,
+        reason: "The captain retried the order.",
+      })
+      .pipe(Effect.ignore);
+    yield* sendToCrewThread(
+      captain,
+      order,
+      `The captain is retrying this order. Your earlier work is still in the worktree. Start from this brief:\n${brief ?? order.brief}`,
+      "queue",
+    );
+    yield* due.invalidate;
+    return { ...order, state: "running", retries, pendingFollowUp: null, updatedAt: at };
+  });
+
   const dropOrder: CaptainService["Service"]["dropOrder"] = Effect.fn("CaptainService.dropOrder")(
     function* ({ captain, orderId, reason }) {
       const order = yield* ownedOrder(captain, orderId);
       if (order.state === "dropped") return order;
-      if (order.state === "done") {
+      if (order.state === "done" || order.state === "accepted") {
         return yield* new CaptainError({
           reason: "invalid_order",
           captainId: captain.id,
@@ -642,31 +1431,45 @@ const make = Effect.gen(function* () {
         });
       }
       const at = yield* nowIso;
-      yield* store.transitionOrder({ orderId, from: ["queued", "running"], to: "dropped", at });
-      if (order.threadId !== null) {
-        const crewThreadId = order.threadId;
-        yield* setRole(crewThreadId, undefined);
-        yield* threads
+      yield* store.transitionOrder({
+        orderId,
+        from: ["queued", "running", "verifying", "verify_failed", "reviewing"],
+        to: "dropped",
+        at,
+      });
+      yield* cancelWork(orderId);
+      const stop = (threadId: ThreadId) =>
+        threads
           .interruptThread({
             projectId: captain.projectId,
-            commandId: CommandId.make(`mcp:captain-drop:${yield* newId}`),
-            threadId: crewThreadId,
+            commandId: CommandId.make(`mcp:captain-drop:${threadId}:${orderId}`),
+            threadId,
             reason,
           })
           .pipe(
             Effect.andThen(
-              dispatch(crewThreadId, {
+              dispatch(threadId, {
                 type: "queue.hold",
-                commandId: CommandId.make(`server:captain-drop-hold:${yield* newId}`),
-                threadId: crewThreadId,
+                commandId: CommandId.make(`server:captain-drop-hold:${threadId}:${orderId}`),
+                threadId,
               }),
             ),
             Effect.catch((error) =>
-              Effect.logWarning("stopping a dropped crew thread failed", { orderId, cause: error }),
+              Effect.logWarning("stopping a dropped order's thread failed", {
+                orderId,
+                cause: error,
+              }),
             ),
           );
+      if (order.review !== null && order.review.finishedAt === null) {
+        yield* clearRole(order.review.threadId);
+        yield* stop(order.review.threadId);
       }
-      yield* admissionDue.invalidate;
+      if (order.threadId !== null) {
+        yield* clearRole(order.threadId);
+        yield* stop(order.threadId);
+      }
+      yield* due.invalidate;
       yield* admitNow(captain);
       return { ...order, state: "dropped", updatedAt: at } satisfies CaptainOrder;
     },
@@ -677,21 +1480,29 @@ const make = Effect.gen(function* () {
   )(function* ({ threadId, report }) {
     const { captain, order } = yield* requireCrew(threadId);
     const at = yield* nowIso;
-    const state = report.status === "done" ? "done" : order.state;
+    const target =
+      report.status === "done" && order.state === "running"
+        ? order.doneCheck !== null
+          ? "verifying"
+          : order.kind === "change"
+            ? "reviewing"
+            : "done"
+        : undefined;
     const lastReport = {
       status: report.status,
       summary: report.summary,
       asks: report.asks ?? [],
       at,
     };
-    yield* store.recordReport({
+    const state = yield* store.recordReport({
       orderId: order.id,
       report: lastReport,
       reportMd: report.reportMd,
-      state,
       at,
+      ...(target === undefined ? {} : { moveTo: { from: ["running" as const], to: target } }),
     });
-    yield* admissionDue.invalidate;
+    const moved = target !== undefined && state === target;
+    yield* due.invalidate;
     yield* PubSub.publish(signals, {
       kind: "report",
       captainId: captain.id,
@@ -701,7 +1512,8 @@ const make = Effect.gen(function* () {
       summary: report.summary,
       asks: lastReport.asks,
     });
-    if (state === "done" && order.state !== "done") yield* admitNow(captain);
+    if (moved && state === "done") yield* admitNow(captain);
+    if (moved && state !== "done") yield* kick;
     return {
       ...order,
       state,
@@ -711,28 +1523,229 @@ const make = Effect.gen(function* () {
     } satisfies CaptainOrder;
   });
 
+  const modelLabel = (review: CaptainReview) => review.model.model;
+
+  const submitReview: CaptainService["Service"]["submitReview"] = Effect.fn(
+    "CaptainService.submitReview",
+  )(function* ({ threadId, review: submitted }) {
+    const { captain, order } = yield* requireReviewer(threadId);
+    const active = order.review as CaptainReview;
+    const at = yield* nowIso;
+    const finished: CaptainReview = {
+      ...active,
+      verdict: submitted.verdict,
+      findings: submitted.findings,
+      finishedAt: at,
+    };
+    if (submitted.verdict === "approve") {
+      const moved = yield* store.patchOrder({
+        orderId: order.id,
+        from: ["reviewing"],
+        at,
+        state: "accepted",
+        review: finished,
+      });
+      if (moved) {
+        yield* clearRole(threadId);
+        yield* note(
+          captain,
+          order,
+          `review:${order.id}:${active.round}:approve`,
+          `accepted (reviewed by ${modelLabel(active)})`,
+        );
+        yield* admitNow(captain);
+      }
+      return { ...order, state: "accepted", review: finished, updatedAt: at };
+    }
+    const retries = order.retries + 1;
+    const exhausted = retries > captain.charter.retryLimit;
+    const followUp = reviewRejectedMessage(modelLabel(active), submitted.findings);
+    const moved = yield* store.patchOrder({
+      orderId: order.id,
+      from: ["reviewing"],
+      at,
+      state: "verify_failed",
+      retries,
+      review: finished,
+      pendingFollowUp: exhausted ? null : followUp,
+    });
+    if (!moved) return order;
+    yield* clearRole(threadId);
+    const rejected = { ...order, retries, review: finished, pendingFollowUp: followUp };
+    if (exhausted) {
+      yield* note(
+        captain,
+        order,
+        `review:${order.id}:${active.round}:limit`,
+        `review rejected ${times(retries)}, needs you`,
+      );
+      yield* retryLimitEscalation(
+        captain,
+        order,
+        `review rejected ${times(retries)}`,
+        `Findings from ${modelLabel(active)}:\n${followUp}`,
+      );
+      return { ...rejected, state: "verify_failed", pendingFollowUp: null };
+    }
+    const count = submitted.findings.length;
+    yield* settleFailedGate(
+      captain,
+      rejected,
+      `review rejected (${count} finding${count === 1 ? "" : "s"}), sent back`,
+    );
+    return { ...rejected, state: "running", pendingFollowUp: null };
+  });
+
+  const reviewerEnded: CaptainService["Service"]["reviewerEnded"] = Effect.fn(
+    "CaptainService.reviewerEnded",
+  )(function* (threadId) {
+    const found = yield* requireReviewer(threadId).pipe(Effect.option);
+    if (Option.isNone(found)) return;
+    const { captain, order } = found.value;
+    const review = order.review as CaptainReview;
+    if (!review.reprompted) {
+      const marked = yield* store.patchOrder({
+        orderId: order.id,
+        from: ["reviewing"],
+        at: yield* nowIso,
+        review: { ...review, reprompted: true },
+      });
+      if (!marked) return;
+      yield* threads
+        .sendToThread({
+          projectId: captain.projectId,
+          commandId: CommandId.make(`server:captain-review-reprompt:${order.id}:${review.round}`),
+          threadId,
+          messageId: MessageId.make(`message:captain-review-reprompt:${order.id}:${review.round}`),
+          senderThreadId: captain.threadId,
+          text: REVIEW_REPROMPT,
+          attachments: [],
+          mode: "queue",
+          createdBy: "agent",
+          creationSource: "server",
+        })
+        .pipe(Effect.mapError(threadFailure(threadId)));
+      return;
+    }
+    yield* openEscalation({
+      captainId: captain.id,
+      orderId: order.id,
+      kind: "decision",
+      summary: `${order.title}: the reviewer finished without a verdict`,
+      detail: `${modelLabel(review)} was asked twice and never called review_submit.`,
+      options: ["order_retry", "order_drop", "accept the change yourself"],
+      wake: true,
+    });
+  });
+
+  const escalate: CaptainService["Service"]["escalate"] = Effect.fn("CaptainService.escalate")(
+    function* ({ captain, orderId, kind, summary, detail, options }) {
+      if (orderId !== undefined) yield* ownedOrder(captain, orderId);
+      return yield* openEscalation({
+        captainId: captain.id,
+        orderId: orderId ?? null,
+        kind,
+        summary,
+        detail: detail ?? "",
+        options: options ?? [],
+        wake: false,
+      });
+    },
+  );
+
+  const listEscalations: CaptainService["Service"]["listEscalations"] = (input) =>
+    store.listEscalations(input);
+
+  const resolveEscalation: CaptainService["Service"]["resolveEscalation"] = Effect.fn(
+    "CaptainService.resolveEscalation",
+  )(function* ({ escalationId, resolution }) {
+    const found = yield* store.getEscalation(escalationId);
+    if (Option.isNone(found)) return yield* new CaptainError({ reason: "escalation_not_found" });
+    const escalation = found.value;
+    if (escalation.status !== "open") {
+      return yield* new CaptainError({
+        reason: "invalid_state",
+        captainId: escalation.captainId,
+        detail: "It is already resolved.",
+      });
+    }
+    if (escalation.kind === "approval" && escalation.requestId !== null) {
+      const decision = approvalDecision(resolution);
+      if (decision === undefined) {
+        return yield* new CaptainError({
+          reason: "invalid_state",
+          captainId: escalation.captainId,
+          detail: "Resolve an approval with approve or deny.",
+        });
+      }
+      const order =
+        escalation.orderId === null ? Option.none() : yield* store.getOrder(escalation.orderId);
+      if (Option.isSome(order) && order.value.threadId !== null) {
+        yield* dispatch(order.value.threadId, {
+          type: "runtime-request.respond",
+          commandId: CommandId.make(`server:captain-approval:${escalation.id}`),
+          threadId: order.value.threadId,
+          requestId: escalation.requestId,
+          decision,
+        });
+      }
+    }
+    const at = yield* nowIso;
+    const resolved = yield* store.resolveEscalation({ id: escalation.id, resolution, at });
+    const settled: CaptainEscalation = {
+      ...escalation,
+      status: "resolved",
+      resolution,
+      resolvedAt: at,
+    };
+    if (resolved) {
+      const captain = yield* store.getCaptain(escalation.captainId);
+      const order =
+        escalation.orderId === null ? Option.none() : yield* store.getOrder(escalation.orderId);
+      if (Option.isSome(captain)) {
+        yield* note(
+          captain.value,
+          Option.getOrNull(order),
+          `resolved:${escalation.id}`,
+          `you resolved: ${escalation.summary} → ${resolution}`,
+        );
+      }
+    }
+    return settled;
+  });
+
   const touchActivity: CaptainService["Service"]["touchActivity"] = (orderId) =>
     nowIso.pipe(Effect.flatMap((at) => store.touchActivity({ orderId, at })));
 
   const roleOf: CaptainService["Service"]["roleOf"] = (threadId) =>
-    Effect.map(Ref.get(roles), (current) => current.get(threadId));
+    Effect.map(threadRoles.get(threadId), (entry) =>
+      entry === undefined
+        ? undefined
+        : entry.role === "captain" || entry.orderId === undefined
+          ? { role: "captain" as const, captainId: entry.captainId }
+          : { role: entry.role, captainId: entry.captainId, orderId: entry.orderId },
+    );
 
+  yield* store.releaseAllClaims();
   const startupCaptains = yield* store.listCaptains({});
   for (const captain of startupCaptains) {
     if (captain.status !== "released") {
-      yield* setRole(captain.threadId, { role: "captain", captainId: captain.id });
+      yield* assignRole(
+        captain.threadId,
+        { role: "captain", captainId: captain.id },
+        T3_CODE_CAPTAIN_ROLE_INSTRUCTIONS,
+      );
     }
   }
   for (const order of yield* store.listCrewOrders()) {
-    if (order.threadId !== null) {
-      yield* setRole(order.threadId, {
-        role: "crew",
-        captainId: order.captainId,
-        orderId: order.id,
-      });
+    const captain = startupCaptains.find((candidate) => candidate.id === order.captainId);
+    if (order.threadId === null || captain === undefined) continue;
+    yield* crewRole(captain, order);
+    if (order.state === "reviewing" && order.review !== null && order.review.finishedAt === null) {
+      yield* reviewerRole(captain, order, order.review.threadId);
     }
   }
-  yield* scheduler.register("captain-admission", admitAll);
+  yield* scheduler.register("captain-orders", processDue);
 
   return CaptainService.of({
     create,
@@ -742,14 +1755,24 @@ const make = Effect.gen(function* () {
     roleOf,
     requireCaptain,
     requireCrew,
+    requireReviewer,
     crewOf,
     createOrder,
     listOrders,
     readOrder,
     sendToOrder,
+    answerOrder,
+    retryOrder,
     dropOrder,
     crewReport,
+    submitReview,
+    reviewerEnded,
+    openEscalation,
+    escalate,
+    listEscalations,
+    resolveEscalation,
     touchActivity,
+    drain,
     subscribeSignals: PubSub.subscribe(signals),
   });
 });

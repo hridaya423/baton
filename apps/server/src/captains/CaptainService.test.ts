@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as PubSub from "effect/PubSub";
 
+import * as ThreadRoles from "../orchestration-v2/ThreadRoles.ts";
 import * as CaptainService from "./CaptainService.ts";
 import {
   type CaptainHarness,
@@ -65,10 +66,11 @@ const withHarness = <A, E, R>(
   return body(harness).pipe(Effect.provide(harness.layer));
 };
 
-it.effect("makes a thread a captain: pinned, no auto-settle, told what it is", () =>
+it.effect("makes a thread a captain: pinned, no auto-settle, told what it is on every turn", () =>
   withHarness({}, (harness) =>
     Effect.gen(function* () {
       const captains = yield* CaptainService.CaptainService;
+      const roles = yield* ThreadRoles.ThreadRoles;
       const captain = yield* makeCaptain;
       assert.equal(captain.status, "active");
       assert.equal(captain.name, "Evening captain");
@@ -78,20 +80,18 @@ it.effect("makes a thread a captain: pinned, no auto-settle, told what it is", (
         crewRuntimeMode: "full-access",
         retryLimit: 1,
         stallMinutes: 45,
+        verifyTimeoutMinutes: 10,
       });
       assert.deepEqual(
         harness.commands.map((command) => command.type),
-        ["thread.pin", "thread.auto-settle.set", "message.dispatch"],
+        ["thread.pin", "thread.auto-settle.set"],
       );
       const settle = harness.commands[1];
       assert.isTrue(settle?.type === "thread.auto-settle.set" && settle.enabled === false);
-      const instructions = harness.commands[2];
-      assert.isTrue(
-        instructions?.type === "message.dispatch" &&
-          instructions.createdBy === "agent" &&
-          instructions.creationSource === "server" &&
-          instructions.text.includes("order_create"),
-      );
+      const entry = yield* roles.get(captainThreadId);
+      assert.equal(entry?.role, "captain");
+      assert.include(entry?.instructions ?? "", "order_create");
+      assert.include(entry?.instructions ?? "", "order_answer");
       assert.deepEqual(yield* captains.roleOf(captainThreadId), {
         role: "captain",
         captainId: captain.id,
@@ -167,32 +167,66 @@ it.effect("launches a report and the first change at once, holding an overlappin
             launch.workspaceStrategy.baseRef === baseSha &&
             launch.workspaceStrategy.branch?.startsWith("crew/evening-captain/") === true,
         );
-        assert.include(launch.initialMessage?.text ?? "", "You are crew for captain");
-        assert.include(launch.initialMessage?.text ?? "", "crew_report");
+        assert.notInclude(launch.initialMessage?.text ?? "", "crew_report");
       }
-      assert.include(harness.launches[0]?.initialMessage?.text ?? "", "(report)");
+      const roles = yield* ThreadRoles.ThreadRoles;
+      const reportRole = yield* roles.get(crewThread(report.order));
+      assert.include(reportRole?.instructions ?? "", 'You are crew for captain "Evening captain"');
+      assert.include(reportRole?.instructions ?? "", "(report)");
+      assert.include(reportRole?.instructions ?? "", "crew_report");
       assert.equal(first.order.branch, branches[1]);
       assert.equal(first.order.baseRef, baseSha);
     }),
   ),
 );
 
-it.effect("admits the queued order when its crew reports done, and wakes nothing itself", () =>
+it.effect("admits the queued order when a report order's crew reports done", () =>
+  withHarness({}, (harness) =>
+    Effect.gen(function* () {
+      const captains = yield* CaptainService.CaptainService;
+      const captain = yield* makeCaptain;
+      const first = yield* create(captain, order({ title: "survey", kind: "report", touches: [] }));
+      const second = yield* create(
+        captain,
+        order({ title: "readme", touches: ["README.md"], dependsOn: [first.order.id] }),
+      );
+      assert.equal(second.order.state, "queued");
+      const done = yield* captains.crewReport({
+        threadId: crewThread(first.order),
+        report: { status: "done", summary: "Survey written." },
+      });
+      assert.equal(done.state, "done");
+      assert.equal(yield* orderState(captain, first.order.id), "done");
+      assert.equal(yield* orderState(captain, second.order.id), "running");
+      assert.equal(harness.launches.length, 2);
+    }),
+  ),
+);
+
+it.effect("holds a change order's files until its review accepts it, then admits the queue", () =>
   withHarness({}, (harness) =>
     Effect.gen(function* () {
       const captains = yield* CaptainService.CaptainService;
       const captain = yield* makeCaptain;
       const first = yield* create(captain, order({ title: "readme", touches: ["README.md"] }));
       const second = yield* create(captain, order({ title: "readme-two", touches: ["README.md"] }));
-      assert.equal(second.order.state, "queued");
-      const done = yield* captains.crewReport({
+      const reported = yield* captains.crewReport({
         threadId: crewThread(first.order),
         report: { status: "done", summary: "README juiced up." },
       });
-      assert.equal(done.state, "done");
-      assert.equal(yield* orderState(captain, first.order.id), "done");
+      assert.equal(reported.state, "reviewing");
+      assert.equal(yield* orderState(captain, second.order.id), "queued");
+      yield* captains.drain;
+      const reviewing = (yield* captains.listOrders(captain)).find((o) => o.id === first.order.id);
+      const reviewerThread = reviewing?.review?.threadId;
+      assert.isDefined(reviewerThread);
+      yield* captains.submitReview({
+        threadId: reviewerThread!,
+        review: { verdict: "approve", findings: [] },
+      });
+      assert.equal(yield* orderState(captain, first.order.id), "accepted");
       assert.equal(yield* orderState(captain, second.order.id), "running");
-      assert.equal(harness.launches.length, 2);
+      assert.equal(harness.launches.length, 3);
     }),
   ),
 );
@@ -229,7 +263,10 @@ it.effect("holds orders behind their dependencies and rejects unknown ones", () 
     Effect.gen(function* () {
       const captains = yield* CaptainService.CaptainService;
       const captain = yield* makeCaptain;
-      const base = yield* create(captain, order({ title: "api", touches: ["api/**"] }));
+      const base = yield* create(
+        captain,
+        order({ title: "api", kind: "report", touches: ["api/**"] }),
+      );
       const dependent = yield* create(
         captain,
         order({ title: "client", touches: ["client/**"], dependsOn: [base.order.id] }),
@@ -397,7 +434,7 @@ it.effect("drops an order whose crew cannot start and says why", () =>
       assert.equal(created.order.state, "dropped");
       const signal = yield* PubSub.take(subscription);
       assert.equal(signal.kind, "launch_failed");
-      assert.equal(signal.order.id, created.order.id);
+      assert.equal(signal.order?.id, created.order.id);
     }),
   ),
 );

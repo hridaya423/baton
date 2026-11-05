@@ -61,11 +61,15 @@ const setup = Effect.gen(function* () {
   const captains = yield* CaptainService.CaptainService;
   const reactor = yield* CaptainReactor.CaptainReactor;
   const captain = yield* captains.create({ threadId: captainThreadId });
-  const start = (title: string, touches: ReadonlyArray<string> = [`${title}/`]) =>
+  const start = (
+    title: string,
+    touches: ReadonlyArray<string> = [`${title}/`],
+    kind: "change" | "report" = "change",
+  ) =>
     captains
       .createOrder({
         captain,
-        order: { title, brief: `Do ${title}.`, kind: "change", touches: [...touches] },
+        order: { title, brief: `Do ${title}.`, kind, touches: [...touches] },
         runtimeModeCeiling: "full-access",
       })
       .pipe(Effect.map(({ order }) => order));
@@ -133,7 +137,7 @@ it.effect("wakes once for a done report and not again when that turn ends", () =
   return Effect.gen(function* () {
     const { reactor, captains, start } = yield* setup;
     yield* reactor.start();
-    const order = yield* start("readme");
+    const order = yield* start("readme", [], "report");
     const crew = order.threadId!;
     yield* captains.crewReport({
       threadId: crew,

@@ -5,6 +5,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   type RuntimeMode,
@@ -20,6 +21,9 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadRoles from "../orchestration-v2/ThreadRoles.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -33,6 +37,32 @@ export const environmentId = EnvironmentId.make("environment:captain-test");
 export const captainThreadId = ThreadId.make("thread:captain");
 export const baseSha = "0123456789abcdef0123456789abcdef01234567";
 const instanceId = ProviderInstanceId.make("codex");
+const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+
+const provider = (
+  id: ProviderInstanceId,
+  driver: string,
+  models: ReadonlyArray<string>,
+  fields: { readonly enabled?: boolean } = {},
+) =>
+  ({
+    instanceId: id,
+    driver: ProviderDriverKind.make(driver),
+    enabled: fields.enabled ?? true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    models: models.map((slug) => ({ slug })),
+  }) as never;
+
+const defaultProviders = [
+  provider(instanceId, "codex", ["gpt-5.4", "gpt-5.5", "gpt-5.5-mini"]),
+  provider(claudeInstanceId, "claudeAgent", [
+    "claude-sonnet-5-5",
+    "claude-opus-5-5",
+    "claude-haiku-5-5",
+  ]),
+];
 
 export const shell = (
   id: ThreadId,
@@ -40,6 +70,7 @@ export const shell = (
     readonly runtimeMode?: RuntimeMode;
     readonly subagent?: boolean;
     readonly lastError?: string | null;
+    readonly worktreePath?: string | null;
   } = {},
 ) =>
   ({
@@ -60,6 +91,9 @@ export const shell = (
     deletedAt: null,
     activeRunId: RunId.make(`run:live:${id}`),
     lastError: fields.lastError ?? null,
+    worktreePath: fields.worktreePath ?? null,
+    pendingRuntimeRequest: null,
+    pullRequests: [],
     pendingBackgroundTasks: [],
   }) as unknown as OrchestrationV2ThreadShell;
 
@@ -77,6 +111,11 @@ type InterruptInput = Parameters<
 export interface CaptainHarnessOptions {
   readonly captainShell?: Parameters<typeof shell>[1];
   readonly launchFails?: boolean;
+  /** Where crew and reviewer worktrees are, so done-checks run in a directory that exists. */
+  readonly worktreeDir?: string;
+  readonly providers?: ReadonlyArray<unknown>;
+  /** What `git diff` prints for a crew branch. */
+  readonly diff?: string;
 }
 
 /** In-memory stand-ins for the thread services, so tests read what the captain code asked of them. */
@@ -131,7 +170,16 @@ export const makeHarness = (options: CaptainHarnessOptions = {}) => {
         : Effect.sync(() => {
             launches.push(input);
             const threadId = input.threadId ?? ThreadId.make(`thread:launched:${launches.length}`);
-            shells.set(threadId, shell(threadId, { runtimeMode: input.runtimeMode }));
+            shells.set(
+              threadId,
+              shell(threadId, {
+                runtimeMode: input.runtimeMode,
+                worktreePath:
+                  input.workspaceStrategy.type === "existing_worktree"
+                    ? input.workspaceStrategy.worktreePath
+                    : (options.worktreeDir ?? null),
+              }),
+            );
             return { threadId, projection: {} as never, resumed: false };
           }),
   });
@@ -139,10 +187,29 @@ export const makeHarness = (options: CaptainHarnessOptions = {}) => {
   const layerExternal = Layer.mergeAll(
     threads,
     launchLayer,
+    ThreadRoles.layer,
+    ProcessRunner.layer,
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.succeed((options.providers ?? defaultProviders) as never),
+    }),
     Layer.mock(ProjectService.ProjectService)({
       getById: () => Effect.succeedSome({ workspaceRoot: "/repo" } as never),
     }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({
+      execute: (input) => {
+        const diff = options.diff ?? "diff --git a/README.md b/README.md\n+hello\n";
+        const names = input.args.includes("--name-status");
+        const limit = input.maxOutputBytes ?? Number.MAX_SAFE_INTEGER;
+        const stdout = names ? "M\tREADME.md\n" : diff;
+        const truncated = Buffer.byteLength(stdout) > limit;
+        return Effect.succeed({
+          exitCode: 0,
+          stdout: truncated ? stdout.slice(0, limit) : stdout,
+          stderr: "",
+          stdoutTruncated: truncated,
+          stderrTruncated: false,
+        } as never);
+      },
       resolvePrimaryRemoteName: () => Effect.fail(new Error("no remote") as never),
       resolveDefaultBranchName: () => Effect.succeed(null),
       resolveCommit: ({ revision }) =>

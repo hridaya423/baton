@@ -2381,6 +2381,15 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.captainsList]: (input) =>
           captains.list(input).pipe(Effect.map((list) => ({ captains: list }))),
+        [WS_METHODS.captainsEscalationsList]: (input) =>
+          captains
+            .listEscalations({ captainId: input.captainId, status: "open" })
+            .pipe(Effect.map((escalations) => ({ escalations }))),
+        [WS_METHODS.captainsEscalationsResolve]: (input) =>
+          Effect.annotateCurrentSpan({ "captain.escalation.id": input.escalationId }).pipe(
+            Effect.andThen(captains.resolveEscalation(input)),
+            Effect.map((escalation) => ({ escalation })),
+          ),
         [WS_METHODS.captainsRelease]: (input) =>
           Effect.annotateCurrentSpan({ "captain.id": input.captainId }).pipe(
             Effect.andThen(captains.release(input.captainId)),

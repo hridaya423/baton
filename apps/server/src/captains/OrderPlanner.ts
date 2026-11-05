@@ -25,19 +25,34 @@ export const ordersOverlap = (
   return left.touches.some((a) => right.touches.some((b) => globsOverlap(a, b)));
 };
 
+/** Work not yet accepted: its files stay claimed while the crew runs, the check runs or a reviewer reads. */
+const HOLDS_FILES: ReadonlySet<Planned["state"]> = new Set([
+  "running",
+  "verifying",
+  "verify_failed",
+  "reviewing",
+]);
+
+const SATISFIES_DEPENDENCY: ReadonlySet<Planned["state"]> = new Set(["done", "accepted"]);
+
+/** Only a crew at work takes a slot of the crew cap. */
 export const selectAdmissions = (input: {
   readonly crewCap: number;
   readonly orders: ReadonlyArray<Planned>;
 }): ReadonlyArray<CaptainOrderId> => {
-  const running = input.orders.filter((order) => order.state === "running");
-  const done = new Set(input.orders.filter((order) => order.state === "done").map((o) => o.id));
+  const holding = input.orders.filter((order) => HOLDS_FILES.has(order.state));
+  let crewAtWork = input.orders.filter((order) => order.state === "running").length;
+  const satisfied = new Set(
+    input.orders.filter((order) => SATISFIES_DEPENDENCY.has(order.state)).map((o) => o.id),
+  );
   const admitted: Array<CaptainOrderId> = [];
   for (const order of input.orders) {
-    if (running.length >= input.crewCap) break;
+    if (crewAtWork >= input.crewCap) break;
     if (order.state !== "queued") continue;
-    if (!order.dependsOn.every((id) => done.has(id))) continue;
-    if (running.some((active) => ordersOverlap(order, active))) continue;
-    running.push(order);
+    if (!order.dependsOn.every((id) => satisfied.has(id))) continue;
+    if (holding.some((active) => ordersOverlap(order, active))) continue;
+    holding.push(order);
+    crewAtWork++;
     admitted.push(order.id);
   }
   return admitted;

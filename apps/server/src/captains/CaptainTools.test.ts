@@ -7,6 +7,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as ThreadRoles from "../orchestration-v2/ThreadRoles.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -60,6 +61,13 @@ it.effect(
           runtimeModeCeiling: "full-access",
         });
         const crewThreadId = order.threadId!;
+        const reviewerThreadId = ThreadId.make("thread:reviewer");
+        yield* (yield* ThreadRoles.ThreadRoles).set(reviewerThreadId, {
+          role: "reviewer",
+          captainId: captain.id,
+          orderId: order.id,
+          instructions: "review",
+        });
         const services =
           yield* Effect.context<
             Exclude<
@@ -68,7 +76,7 @@ it.effect(
             >
           >();
         const scopes = new Map(
-          [captainThreadId, crewThreadId, ordinaryThreadId].map(
+          [captainThreadId, crewThreadId, ordinaryThreadId, reviewerThreadId].map(
             (id) => [id, scopeFor(id)] as const,
           ),
         );
@@ -124,15 +132,20 @@ it.effect(
         const captainSession = yield* session(captainThreadId);
         const crewSession = yield* session(crewThreadId);
         const ordinarySession = yield* session(ordinaryThreadId);
+        const reviewerSession = yield* session(reviewerThreadId);
 
         assert.deepEqual(yield* captainSession.listed, [
+          "escalate",
+          "order_answer",
           "order_create",
           "order_drop",
           "order_list",
           "order_read",
+          "order_retry",
           "order_send",
         ]);
         assert.deepEqual(yield* crewSession.listed, ["crew_report"]);
+        assert.deepEqual(yield* reviewerSession.listed, ["review_submit"]);
         assert.deepEqual(yield* ordinarySession.listed, []);
 
         const refused = (body: unknown) => JSON.stringify(body).toLowerCase();
