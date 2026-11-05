@@ -705,6 +705,83 @@ it.effect("keeps the store's read failure as the cause when a command projection
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("groups a thread under another and moves it out without bumping updatedAt", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const launcherId = ThreadId.make("thread:group-launcher");
+    const threadId = ThreadId.make("thread:group-member");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-group-member"),
+      threadId,
+      projectId: ProjectId.make("project:group"),
+      title: "Member",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      groupedUnderThreadId: launcherId,
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const created = yield* projections.getThreadShell(threadId);
+    assert.equal(created?.groupedUnderThreadId, launcherId);
+
+    for (const groupedUnderThreadId of [null, launcherId]) {
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`group-${groupedUnderThreadId ?? "out"}`),
+        threadId,
+        groupedUnderThreadId,
+      });
+      const shell = yield* projections.getThreadShell(threadId);
+      assert.equal(shell?.groupedUnderThreadId ?? null, groupedUnderThreadId);
+      assert.deepEqual(shell?.updatedAt, created?.updatedAt);
+    }
+
+    yield* TestClock.adjust("1 second");
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("group-retitle"),
+      threadId,
+      title: "Renamed",
+      groupedUnderThreadId: null,
+    });
+    const retitled = yield* projections.getThreadShell(threadId);
+    assert.notDeepEqual(retitled?.updatedAt, created?.updatedAt);
+
+    const selfUpdate = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("group-self"),
+        threadId,
+        groupedUnderThreadId: threadId,
+      }),
+    );
+    assert.equal(selfUpdate._tag, "Failure");
+    const selfCreate = yield* Effect.exit(
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-group-self"),
+        threadId: ThreadId.make("thread:group-self"),
+        projectId: ProjectId.make("project:group"),
+        title: "Self",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "agent",
+        creationSource: "mcp",
+        groupedUnderThreadId: ThreadId.make("thread:group-self"),
+      }),
+    );
+    assert.equal(selfCreate._tag, "Failure");
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("implements a proposed plan that the command projection leaves out", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
