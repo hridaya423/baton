@@ -36,6 +36,12 @@ Each adopted upstream PR lands as one commit titled `adopt #NNNNN: <title>` and 
 | [#22197](https://github.com/pingdotgg/t3code/pull/22197)        | feat: agents know where you are and where the dev server runs (includes upstream's `<thread_ids>` runtime instruction)                                                                                                                                                                         | `40f36fddf` |
 | [#28047](https://github.com/pingdotgg/t3code/pull/28047)        | feat: Labs option to suggest your next prompt after Claude and Codex turns                                                                                                                                                                                                                     | `a66caa698` |
 
+## Considered and skipped
+
+- [#28655](https://github.com/pingdotgg/t3code/pull/28655) inline thinking and "Worked for" fold: the redesign already renders the active turn its own way and has the fold.
+- [#10412](https://github.com/pingdotgg/t3code/pull/10412) theme CSS and chat wallpaper: written against pre-redesign surfaces (about 100 conflict hunks). To be rebuilt on the redesign.
+- [#22256](https://github.com/pingdotgg/t3code/pull/22256) shared right-panel width: adopted, then dropped by the redesign, which has no per-thread right panel.
+
 ## Where Baton differs
 
 Baton renames only what a user sees. Package names, env vars (`T3CODE_*`), internal identifiers and the `t3code://` link scheme stay upstream's, so rebases stay clean.
