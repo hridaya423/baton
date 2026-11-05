@@ -12,7 +12,10 @@ import {
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import {
+  projectThreadAwarenessV2,
+  type CaptainNeedsYouAwareness,
+} from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -35,6 +38,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as CaptainService from "../captains/CaptainService.ts";
 import {
   isAgentActivityPublishingEnabledValue,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -289,6 +293,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly thread: Option.Option<AgentAwarenessThread>;
   readonly project: Option.Option<Project>;
+  readonly captainNeedsYou?: CaptainNeedsYouAwareness | null;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -315,6 +320,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
         environmentId: input.environmentId,
         project: input.project.value,
         thread: input.thread.value,
+        captainNeedsYou: input.captainNeedsYou ?? null,
       }),
     ),
     reason: "snapshot",
@@ -364,6 +370,8 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
   const signingKey = yield* EnvironmentSigningKey;
+  // A server without captains has none to tell the phone about.
+  const captains = yield* Effect.serviceOption(CaptainService.CaptainService);
   const scope = yield* Effect.scope;
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
@@ -524,10 +532,15 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
+    const captainNeedsYou =
+      Option.isNone(captains) || Option.isNone(thread)
+        ? null
+        : yield* captains.value.needsYouOf(threadId).pipe(Effect.orElseSucceed(() => null));
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       thread,
       project,
+      captainNeedsYou,
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
@@ -594,6 +607,7 @@ export const make = Effect.gen(function* () {
               environmentId,
               thread: Option.some({ ...thread.value, settledOverride: null }),
               project,
+              captainNeedsYou,
             })
           : null;
       if (unsettled?.state?.phase === "completed") {
@@ -814,6 +828,27 @@ export const make = Effect.gen(function* () {
           Effect.andThen(publishActiveThreadsWhenConfigured(startupState !== "enabled")),
         ),
       );
+      if (Option.isSome(captains)) {
+        // An item opening or resolving is not a thread event, so the captain's thread is told here.
+        yield* forkParked(
+          Stream.runForEach(captains.value.subscribeBoard({}), (event) => {
+            if (event.type === "snapshot" || event.type === "order") return Effect.void;
+            if (event.type === "captain") return enqueueThreadPublish(event.captain.threadId);
+            return captains.value.get(event.escalation.captainId).pipe(
+              Effect.flatMap((captain) =>
+                Option.isSome(captain) ? enqueueThreadPublish(captain.value.threadId) : Effect.void,
+              ),
+              Effect.orElseSucceed(() => undefined),
+            );
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("captain needs-you publishing stopped", {
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          ),
+        );
+      }
       yield* forkParked(
         Stream.runForEach(threads.streamDomainEvents, (event) => {
           const threadId = eventThreadId(event);
@@ -839,4 +874,11 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(AgentAwarenessRelay, make);
+/** The running server always has captains, so a missing service fails the build instead of silencing the push. */
+export const layer = Layer.effect(
+  AgentAwarenessRelay,
+  Effect.gen(function* () {
+    const captainService = yield* CaptainService.CaptainService;
+    return yield* make.pipe(Effect.provideService(CaptainService.CaptainService, captainService));
+  }),
+);

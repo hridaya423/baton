@@ -507,6 +507,10 @@ it.effect(
         assert.equal(opened.status, "open");
         assert.deepEqual(opened.options, ["delete", "keep"]);
         assert.deepEqual(yield* noteTexts(signals), []);
+        assert.deepEqual(yield* captains.needsYouOf(captain.threadId), {
+          count: 1,
+          summary: "Delete the old API?",
+        });
         assert.deepEqual(
           (yield* captains.listEscalations({ captainId: captain.id })).map(
             (escalation) => escalation.id,
@@ -531,6 +535,8 @@ it.effect(
         });
         assert.equal(resolved.status, "resolved");
         assert.equal(resolved.resolution, "keep");
+        assert.isNull(yield* captains.needsYouOf(captain.threadId));
+        assert.isNull(yield* captains.needsYouOf("thread:not-a-captain" as ThreadId));
         assert.deepEqual(yield* noteTexts(signals), ["you resolved: Delete the old API? → keep"]);
         assert.deepEqual(
           yield* captains.listEscalations({ captainId: captain.id, status: "open" }),

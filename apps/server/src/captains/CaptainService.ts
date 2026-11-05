@@ -301,6 +301,10 @@ export class CaptainService extends Context.Service<
       readonly escalationId: CaptainEscalationId;
       readonly resolution: string;
     }) => Effect.Effect<CaptainEscalation, CaptainError>;
+    /** What a captain's thread is waiting on the user for, for the push that tells the phone. `null` when nothing is. */
+    readonly needsYouOf: (
+      threadId: ThreadId,
+    ) => Effect.Effect<{ readonly count: number; readonly summary: string } | null, CaptainError>;
     readonly touchActivity: (orderId: CaptainOrderId) => Effect.Effect<void, CaptainError>;
     /** Runs everything due now and waits for the verifications and reviewer launches it starts. */
     readonly drain: Effect.Effect<void, CaptainError>;
@@ -2929,6 +2933,16 @@ const make = Effect.gen(function* () {
   const listEscalations: CaptainService["Service"]["listEscalations"] = (input) =>
     store.listEscalations(input);
 
+  const needsYouOf: CaptainService["Service"]["needsYouOf"] = Effect.fn(
+    "CaptainService.needsYouOf",
+  )(function* (threadId) {
+    const captain = yield* store.getCaptainByThread(threadId);
+    if (Option.isNone(captain) || captain.value.status === "released") return null;
+    const open = yield* store.listEscalations({ captainId: captain.value.id, status: "open" });
+    const oldest = open[0];
+    return oldest === undefined ? null : { count: open.length, summary: oldest.summary };
+  });
+
   const resolveEscalation: CaptainService["Service"]["resolveEscalation"] = Effect.fn(
     "CaptainService.resolveEscalation",
   )(function* ({ escalationId, resolution }) {
@@ -3215,6 +3229,7 @@ const make = Effect.gen(function* () {
     escalate,
     listEscalations,
     resolveEscalation,
+    needsYouOf,
     touchActivity,
     drain,
     subscribeSignals: PubSub.subscribe(signals),

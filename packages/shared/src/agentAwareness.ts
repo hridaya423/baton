@@ -38,9 +38,16 @@ function buildAgentAwarenessDeepLink(input: {
   return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
 }
 
+/** Open items a captain's thread is waiting on the user for, oldest summary first. */
+export interface CaptainNeedsYouAwareness {
+  readonly count: number;
+  readonly summary: string;
+}
+
 export interface ProjectThreadAwarenessV2Input {
   readonly environmentId: EnvironmentId;
   readonly project: Pick<Project, "title">;
+  readonly captainNeedsYou?: CaptainNeedsYouAwareness | null;
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
     | "activityRunStatus"
@@ -62,7 +69,15 @@ export function projectThreadAwarenessV2(
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
   if (!isListedThreadLineage(thread.lineage)) return null;
-  const phase = resolveThreadAwarenessPhaseV2(thread);
+  const ownPhase = resolveThreadAwarenessPhaseV2(thread);
+  // The thread's own pending request outranks what its crew is waiting on.
+  const needsYou =
+    ownPhase === "waiting_for_approval" || ownPhase === "waiting_for_input"
+      ? null
+      : input.captainNeedsYou != null && input.captainNeedsYou.count > 0
+        ? input.captainNeedsYou
+        : null;
+  const phase = needsYou === null ? ownPhase : "waiting_for_input";
   if (phase === null) {
     return null;
   }
@@ -76,18 +91,25 @@ export function projectThreadAwarenessV2(
     return null;
   }
   const detail =
-    phase === "completed"
-      ? "Review the completed task."
-      : phase === "failed"
-        ? "The agent run failed."
-        : undefined;
+    needsYou !== null
+      ? needsYou.summary
+      : phase === "completed"
+        ? "Review the completed task."
+        : phase === "failed"
+          ? "The agent run failed."
+          : undefined;
   return {
     environmentId,
     threadId: thread.id,
     projectTitle: project.title,
     threadTitle: thread.title,
     phase,
-    headline: headlineForPhase(phase),
+    headline:
+      needsYou === null
+        ? headlineForPhase(phase)
+        : needsYou.count === 1
+          ? "Needs you"
+          : `${needsYou.count} items need you`,
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
     updatedAt: DateTime.formatIso(thread.updatedAt),

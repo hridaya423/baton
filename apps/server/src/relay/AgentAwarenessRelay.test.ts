@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
+  type CaptainBoardEvent,
   EnvironmentId,
   EventId,
   MessageId,
@@ -36,12 +37,15 @@ import {
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
+import * as CaptainService from "../captains/CaptainService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
+
+type CaptainBoardEventCaptain = Extract<CaptainBoardEvent, { readonly type: "captain" }>["captain"];
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -146,6 +150,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly catchUpThreads?: ReadonlyArray<OrchestrationV2ThreadShell>;
+    /** A captain thread's open items, and the board changes that announce them. */
+    readonly captain?: {
+      readonly needsYou: Ref.Ref<{ readonly count: number; readonly summary: string } | null>;
+      readonly board: Stream.Stream<CaptainBoardEvent>;
+    };
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -277,7 +286,24 @@ const makeTestRelay = Effect.fnUntraced(function* (
     updatedAt: NOW,
     deletedAt: null,
   };
+  const captainThreadId = THREAD_ID;
+  const captainOptions = options.captain;
+  const captainStub = captainOptions
+    ? ({
+        needsYouOf: (threadId: ThreadId) =>
+          threadId === captainThreadId ? Ref.get(captainOptions.needsYou) : Effect.succeed(null),
+        subscribeBoard: () => captainOptions.board,
+        get: (captainId: string) =>
+          Effect.succeedSome({
+            id: captainId,
+            threadId: captainThreadId,
+          } as unknown as CaptainBoardEventCaptain),
+      } as unknown as CaptainService.CaptainService["Service"])
+    : null;
   const relay = yield* AgentAwarenessRelay.make.pipe(
+    captainStub === null
+      ? (self) => self
+      : Effect.provideService(CaptainService.CaptainService, captainStub),
     Effect.provide(EnvironmentKeys.layer),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
@@ -838,6 +864,43 @@ describe("AgentAwarenessRelay", () => {
     ),
   );
 });
+
+it.effect("tells the phone when a captain's crew needs the user, and when it no longer does", () =>
+  Effect.gen(function* () {
+    const needsYou = yield* Ref.make<{ count: number; summary: string } | null>(null);
+    const board = yield* Queue.unbounded<CaptainBoardEvent>();
+    const { relay, publications } = yield* makeTestRelay({
+      captain: { needsYou, board: Stream.fromQueue(board) },
+    });
+    yield* relay.start();
+    yield* relay.publishThread(THREAD_ID);
+    assert.equal(publications.at(-1)?.state?.phase, "running");
+
+    yield* Ref.set(needsYou, { count: 1, summary: "Merge the README branch?" });
+    yield* Queue.offer(board, {
+      type: "escalation",
+      escalation: { captainId: "captain:a", status: "open" },
+    } as unknown as CaptainBoardEvent);
+    yield* TestClock.adjust("1 second");
+    yield* relay.drain;
+    assert.include(publications.at(-1)?.state, {
+      threadId: THREAD_ID,
+      phase: "waiting_for_input",
+      headline: "Needs you",
+      detail: "Merge the README branch?",
+    });
+
+    yield* Ref.set(needsYou, null);
+    yield* Queue.offer(board, {
+      type: "escalation",
+      escalation: { captainId: "captain:a", status: "resolved" },
+    } as unknown as CaptainBoardEvent);
+    yield* TestClock.adjust("1 second");
+    yield* relay.drain;
+    assert.equal(publications.at(-1)?.state?.phase, "running");
+    assert.equal(publications.length, 3);
+  }).pipe(Effect.scoped),
+);
 
 it.effect("catches up after startup without polling after success", () =>
   Effect.gen(function* () {

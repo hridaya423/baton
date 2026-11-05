@@ -217,4 +217,56 @@ describe("projectThreadAwarenessV2", () => {
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
   });
+
+  describe("a captain's open needs-you items", () => {
+    const input = {
+      environmentId: "env-1" as EnvironmentId,
+      project,
+    };
+
+    it("ask for the user with the oldest summary as the body, even while the captain works", () => {
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: v2Thread(),
+          captainNeedsYou: { count: 1, summary: "Merge the README branch?" },
+        }),
+      ).toMatchObject({
+        phase: "waiting_for_input",
+        headline: "Needs you",
+        detail: "Merge the README branch?",
+        deepLink: "/threads/env-1/thread-2",
+      });
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: v2Thread({ status: "idle" }),
+          captainNeedsYou: { count: 3, summary: "Pick a benchmark harness" },
+        }),
+      ).toMatchObject({ phase: "waiting_for_input", headline: "3 items need you" });
+    });
+
+    it("leave the thread's own approval alone and project nothing once resolved", () => {
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: v2Thread({
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("request-1"),
+              kind: "approval",
+              createdAt: updatedAt,
+            } as never,
+          }),
+          captainNeedsYou: { count: 1, summary: "Merge?" },
+        }),
+      ).toMatchObject({ phase: "waiting_for_approval", headline: "Approval needed" });
+      expect(
+        projectThreadAwarenessV2({
+          ...input,
+          thread: v2Thread({ status: "idle" }),
+          captainNeedsYou: { count: 0, summary: "" },
+        }),
+      ).toBeNull();
+    });
+  });
 });
