@@ -76,6 +76,11 @@ export const shell = (
     readonly subagent?: boolean;
     readonly lastError?: string | null;
     readonly worktreePath?: string | null;
+    readonly linkOrigin?: {
+      readonly sessionId: string;
+      readonly label: string;
+      readonly access: "full-access";
+    };
   } = {},
 ) =>
   ({
@@ -97,6 +102,7 @@ export const shell = (
     activeRunId: RunId.make(`run:live:${id}`),
     lastError: fields.lastError ?? null,
     worktreePath: fields.worktreePath ?? null,
+    ...(fields.linkOrigin === undefined ? {} : { linkOrigin: fields.linkOrigin }),
     pendingRuntimeRequest: null,
     pullRequests: [],
     pendingBackgroundTasks: [],
