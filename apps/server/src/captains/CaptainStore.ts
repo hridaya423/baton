@@ -316,10 +316,11 @@ export class CaptainStore extends Context.Service<
       readonly resolution: string;
       readonly at: string;
     }) => Effect.Effect<ReadonlyArray<CaptainEscalation>, CaptainError>;
+    /** True when the order was flagged stalled, so the stall pass should run again. */
     readonly touchActivity: (input: {
       readonly orderId: CaptainOrderId;
       readonly at: string;
-    }) => Effect.Effect<void, CaptainError>;
+    }) => Effect.Effect<boolean, CaptainError>;
   }
 >()("t3/captains/CaptainStore") {}
 
@@ -692,9 +693,11 @@ const make = Effect.gen(function* () {
     readonly orderId: CaptainOrderId;
     readonly at: string;
   }) {
-    yield* sql`
+    const rows = yield* sql<{ readonly stall_level: number }>`
       UPDATE captain_orders SET last_activity_at = ${input.at} WHERE order_id = ${input.orderId}
+      RETURNING stall_level
     `.pipe(storage);
+    return (rows[0]?.stall_level ?? 0) > 0;
   });
 
   return CaptainStore.of({

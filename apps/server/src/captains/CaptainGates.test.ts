@@ -703,6 +703,7 @@ it.effect(
         assert.deepEqual(yield* captains.listEscalations({ captainId: captain.id }), []);
 
         harness.shells.set(crew, shell(crew));
+        yield* TestClock.adjust("1 minute");
         yield* captains.drain;
         assert.equal((yield* find(captain, created.id)).stallLevel, 2);
       }),

@@ -615,13 +615,12 @@ const make = Effect.gen(function* () {
   });
 
   const admitNow = (captain: Captain) =>
-    permit
-      .withPermits(1)(admitCaptain(captain))
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("captain admission failed", { captainId: captain.id, cause }),
-        ),
-      );
+    due.invalidate.pipe(
+      Effect.andThen(permit.withPermits(1)(admitCaptain(captain))),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("captain admission failed", { captainId: captain.id, cause }),
+      ),
+    );
 
   const sendFollowUp = Effect.fn("CaptainService.sendFollowUp")(function* (
     captain: Captain,
@@ -1815,7 +1814,7 @@ const make = Effect.gen(function* () {
 
   const drain: CaptainService["Service"]["drain"] = Effect.gen(function* () {
     for (;;) {
-      yield* pass;
+      yield* processDue;
       const pending = [...new Set([...kicked.values(), ...workFibers.values()])];
       if (pending.length === 0) return;
       yield* Effect.forEach(pending, Fiber.await, { discard: true });
@@ -2738,8 +2737,12 @@ const make = Effect.gen(function* () {
     return settled;
   });
 
-  const touchActivity: CaptainService["Service"]["touchActivity"] = (orderId) =>
-    nowIso.pipe(Effect.flatMap((at) => store.touchActivity({ orderId, at })));
+  const touchActivity: CaptainService["Service"]["touchActivity"] = Effect.fn(
+    "CaptainService.touchActivity",
+  )(function* (orderId) {
+    const stalled = yield* store.touchActivity({ orderId, at: yield* nowIso });
+    if (stalled) yield* due.invalidate;
+  });
 
   const roleOf: CaptainService["Service"]["roleOf"] = (threadId) =>
     Effect.map(threadRoles.get(threadId), (entry) =>
