@@ -45,6 +45,20 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets a read grant list a captain's orders but needs operate to land, retry, drop or pause", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.captainsOrdersList)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    for (const method of [
+      WS_METHODS.captainsOrdersLand,
+      WS_METHODS.captainsOrdersRetry,
+      WS_METHODS.captainsOrdersDrop,
+      WS_METHODS.captainsUpdate,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareTriage)).toBe(
       AuthOrchestrationOperateScope,
