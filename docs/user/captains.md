@@ -14,6 +14,12 @@ Use **Open thread** to read or steer a crew thread. **Retry** gives an order ano
 
 Crew threads sit under their captain in the sidebar with a dot for running, needs you and done. Reviewer threads stay out of the sidebar.
 
+## Crew on another machine
+
+With [Linked environments](remote-access.md) on, ask a captain to run an order on a machine you have linked: "do this on the Mac mini". The crew thread, its worktree, the done check and the push all run there, and the board and Needs you list work as before. The link must be paired with full access, and that machine needs a project for the same repository. Without one, the order waits and the captain tells you to clone it there. An offline machine holds the order until it returns.
+
+Orders on another machine land by branch or pull request, never merge. **Open thread** shows only while this app is also connected to that machine; the card names the machine either way.
+
 ## Needs you
 
 A captain asks you when it cannot decide: a choice, an approval, a one-way action, a retry limit, a stalled thread. Each question is a card with its options as buttons and a box for your own answer. The count on the captain row and the inbox button at the bottom of the sidebar show how many are waiting. The command palette's **Needs you** opens the same list across all captains.

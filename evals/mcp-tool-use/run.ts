@@ -504,6 +504,8 @@ const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff
 const captainTools = enabledWhen(McpInvocationContext.visibleToCaptains);
 const crewTools = enabledWhen(McpInvocationContext.visibleToCrew);
 const reviewerTools = enabledWhen(McpInvocationContext.visibleToReviewers);
+// Only a captain's server, linked with full access, lists the tools it calls on its crew's machine.
+const linkHostTools = enabledWhen(McpInvocationContext.visibleToFullAccessLinks);
 const visibleT3Tools = (options: {
   readonly links?: boolean;
   readonly captain?: "captain" | "crew" | "reviewer";
@@ -511,6 +513,7 @@ const visibleT3Tools = (options: {
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      !linkHostTools.has(tool.name) &&
       (options.captain === "captain" || !captainTools.has(tool.name)) &&
       (options.captain === "crew" || !crewTools.has(tool.name)) &&
       (options.captain === "reviewer" || !reviewerTools.has(tool.name)),
