@@ -3119,7 +3119,13 @@ const make = Effect.gen(function* () {
       remote: remoteName.value,
       branch: input.branch,
     });
-    if (pushed.kind === "error") return yield* refused(`Push failed: ${pushed.message}`);
+    if (pushed.kind === "error") {
+      return yield* new CaptainError({
+        reason: "push",
+        threadId: input.threadId,
+        detail: pushed.message,
+      });
+    }
     return {
       outcome: pushed.kind === "pushed" ? ("pushed" as const) : ("up_to_date" as const),
       rewrote: pushed.kind === "pushed" && pushed.rewrote,

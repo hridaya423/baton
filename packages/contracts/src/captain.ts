@@ -256,6 +256,7 @@ export class CaptainError extends Schema.TaggedError<CaptainError>()("CaptainErr
     "escalation_not_found",
     "invalid_state",
     "worktree",
+    "push",
     "storage",
     "dispatch",
   ]),
@@ -300,6 +301,8 @@ export class CaptainError extends Schema.TaggedError<CaptainError>()("CaptainErr
         return `The order is not in a state that allows this.${detail}`;
       case "worktree":
         return `The crew's worktree could not be used.${detail}`;
+      case "push":
+        return this.detail ?? "The push was refused.";
       case "storage":
         return `Captain storage failed.${detail}`;
       case "dispatch":

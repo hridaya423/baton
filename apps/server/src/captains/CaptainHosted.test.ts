@@ -224,6 +224,26 @@ it.effect(
     ),
 );
 
+it.effect("a push the remote rejects reports git's reason, not a broken worktree", () =>
+  withHostedCrew(({ call, dir, remote }) =>
+    Effect.gen(function* () {
+      NodeFS.writeFileSync(
+        `${remote}/hooks/pre-receive`,
+        "#!/bin/sh\necho 'Permission to trial.git denied to someone-else.' >&2\nexit 1\n",
+        { mode: 0o755 },
+      );
+      NodeFS.writeFileSync(`${dir}/rejected.md`, "rejected\n");
+      git(dir, "add", ".");
+      git(dir, "-c", "user.name=Crew", "-c", "user.email=crew@example.com", "commit", "-m", "x");
+      const result = yield* call("crew_worktree_push", { threadId: crewThreadId, branch });
+      assert.isTrue(result.isError === true);
+      const text = JSON.stringify(result.content);
+      assert.include(text, "denied to someone-else");
+      assert.notInclude(text, "worktree could not be used");
+    }),
+  ),
+);
+
 it.effect(
   "the tools a captain calls on its crew's machine are the ones every other caller never sees",
   () =>
