@@ -11,6 +11,7 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { AnchorIcon } from "lucide-react";
 import { useState } from "react";
+import { cn } from "~/lib/utils";
 
 import { captainEnvironment, useCaptainBoard } from "../../state/captains";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -75,7 +76,7 @@ export function CrewBoardPanel(props: { threadRef: ScopedThreadRef }) {
     <section
       aria-label={`${captain.name} crew board`}
       data-testid="crew-board"
-      className="flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3"
+      className="@container/board flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3"
     >
       <header className="flex min-w-0 flex-wrap items-center gap-2">
         <AnchorIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
@@ -110,7 +111,7 @@ export function CrewBoardPanel(props: { threadRef: ScopedThreadRef }) {
           {error}
         </Text>
       )}
-      <div className="grid min-h-0 flex-1 auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-3 overflow-x-auto">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto @5xl/board:grid @5xl/board:auto-cols-[minmax(15rem,1fr)] @5xl/board:grid-flow-col @5xl/board:gap-3 @5xl/board:overflow-x-auto @5xl/board:overflow-y-hidden">
         {CAPTAIN_BOARD_COLUMNS.map((column) => {
           const orders = columns[column];
           const loose = column === "needs-you" ? looseEscalations : [];
@@ -119,7 +120,11 @@ export function CrewBoardPanel(props: { threadRef: ScopedThreadRef }) {
               key={column}
               aria-label={BOARD_COLUMN_LABELS[column]}
               data-testid={`crew-board-column-${column}`}
-              className="flex min-h-0 flex-col gap-2"
+              data-empty={orders.length + loose.length === 0}
+              className={cn(
+                "flex shrink-0 flex-col gap-2 data-[empty=true]:hidden @5xl/board:min-h-0 @5xl/board:shrink @5xl/board:data-[empty=true]:flex",
+                column === "needs-you" && "order-first @5xl/board:order-none",
+              )}
             >
               <div className="flex items-center gap-2 px-1">
                 <Text variant="meta" tone="muted" emphasis>
@@ -129,7 +134,7 @@ export function CrewBoardPanel(props: { threadRef: ScopedThreadRef }) {
                   {orders.length + loose.length}
                 </Text>
               </div>
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+              <div className="flex flex-col gap-2 @5xl/board:min-h-0 @5xl/board:flex-1 @5xl/board:overflow-y-auto">
                 {loose.map((escalation) => (
                   <EscalationCard
                     key={escalation.id}
@@ -156,7 +161,7 @@ export function CrewBoardPanel(props: { threadRef: ScopedThreadRef }) {
           <Text variant="meta" tone="muted" emphasis>
             Dropped
           </Text>
-          <div className="grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-3 overflow-x-auto">
+          <div className="flex flex-col gap-2 overflow-y-auto @5xl/board:grid @5xl/board:auto-cols-[minmax(15rem,1fr)] @5xl/board:grid-flow-col @5xl/board:gap-3 @5xl/board:overflow-x-auto">
             {dropped.map((order) => (
               <OrderCard
                 key={order.id}
