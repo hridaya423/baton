@@ -79,6 +79,17 @@ const SETTINGS_SEARCH_TERMS = {
     "login",
     "auth",
   ],
+  SettingsMedia: [
+    "images",
+    "video",
+    "api key",
+    "openai",
+    "gemini",
+    "fal",
+    "spend cap",
+    "daily cap",
+    "design mode",
+  ],
   SettingsEnvironmentSourceControl: [
     "git",
     "pull requests",
