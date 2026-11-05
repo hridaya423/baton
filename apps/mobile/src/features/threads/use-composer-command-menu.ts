@@ -312,7 +312,10 @@ export function useComposerCommandMenu({
     }
     return detectComposerTrigger(draftMessage, selection.end, { mentionIndexEnabled });
   })();
-  const wantsThreads = trigger?.kind === "path" || trigger?.kind === "thread";
+  const wantsThreads =
+    trigger?.kind === "path" ||
+    trigger?.kind === "thread" ||
+    (trigger?.kind === "pull-request" && !mentionIndexEnabled);
   const wantsFiles = trigger?.kind === "path" || trigger?.kind === "file";
   const wantsPullRequests = trigger?.kind === "pull-request" || trigger?.kind === "hash";
   const wantsIssues =
@@ -324,7 +327,7 @@ export function useComposerCommandMenu({
   });
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(
-    wantsThreads && environmentId ? [environmentId] : [],
+    wantsThreads && environmentId ? [environmentId, ...linkedEnvironments.keys()] : [],
     wantsThreads ? (trigger?.query ?? "") : "",
     { titlesOnly: true },
   );
@@ -620,7 +623,21 @@ export function useComposerCommandMenu({
     };
 
     if (trigger.kind === "issue") return issueItems();
-    if (trigger.kind === "pull-request") return pullRequestItems();
+    if (trigger.kind === "pull-request") {
+      if (mentionIndexEnabled || !environmentId) return pullRequestItems();
+      return [
+        ...pullRequestItems(),
+        ...matchComposerThreadItems({
+          shells: threadShells,
+          environmentId,
+          linkedEnvironments,
+          excludeThreadId: currentThreadId,
+          query: trigger.query,
+          allowEmptyQuery: true,
+          now,
+        }),
+      ];
+    }
     if (trigger.kind === "hash") return [...pullRequestItems(), ...issueItems()];
 
     if (trigger.kind === "slash-command") {
@@ -825,7 +842,11 @@ export function useComposerCommandMenu({
       return;
     }
     if (item.type === "thread") {
-      if (!ownerKey || (trigger.kind !== "path" && trigger.kind !== "thread")) return;
+      if (
+        !ownerKey ||
+        (trigger.kind !== "path" && trigger.kind !== "thread" && trigger.kind !== "pull-request")
+      )
+        return;
       const shell = threadShells.find(
         (candidate) =>
           candidate.environmentId === item.thread.environmentId &&

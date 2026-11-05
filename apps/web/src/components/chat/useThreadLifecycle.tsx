@@ -13,6 +13,7 @@ import {
 } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useDeadlinePassed, useNowAfter } from "../../hooks/useDeadline";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import type { usePendingThreadRequests } from "./usePendingThreadRequests";
 import {
   AuthOrchestrationOperateScope,
@@ -138,6 +139,7 @@ interface ThreadLifecycleInput {
  * banners, opening related threads, and standalone slash commands.
  */
 export function useThreadLifecycle(input: ThreadLifecycleInput) {
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const {
     environmentId,
     routeThreadKey,
@@ -397,7 +399,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     finishRestore();
     if (currentRouteThreadKeyRef.current === routeThreadKey) {
       window.requestAnimationFrame(() => {
-        if (currentRouteThreadKeyRef.current === routeThreadKey) composerRef.current?.focusAtEnd();
+        if (paneFocusedRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
+          composerRef.current?.focusAtEnd();
+        }
       });
     }
   };
@@ -603,7 +607,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         onOpenThread: onOpenRelatedThreadStable,
       })
     : null;
-  // The relative times read the clock; nowMinute re-renders them on the minute.
+  // Derive the formatter clock from the minute subscription so render stays pure.
+  const statusNowMs = Date.parse(`${nowMinute}:00.000Z`);
   const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
   const settledAt = activeThreadShell?.settledAt ?? null;
   // Same rounding as the sidebar's snoozed shelf, so both read the same hour.
@@ -624,7 +629,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       icon={<CheckCircle2Icon />}
       label={settledThreadLabel(
         activeThreadShell,
-        settledAt ? formatRelativeTimeLabel(settledAt) : null,
+        settledAt ? formatRelativeTimeLabel(settledAt, statusNowMs) : null,
       )}
       clockMinute={nowMinute}
       actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}

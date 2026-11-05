@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { DraftInput } from "../ui/draft-input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -126,7 +127,7 @@ export function MentionIndexSettings() {
   if (!enabled) return null;
   return (
     <SettingsSection id="mentions" title="Mentions">
-      <p className="text-secondary-label px-4 pt-3 text-xs sm:px-5">
+      <p className="text-secondary-label px-4 pt-3 text-caption sm:px-5">
         Jira and Figma indexes are per project. Environment defaults apply until a project overrides
         them. Pull requests and GitHub issues always follow the open project&apos;s repo. Turn the
         mention index off in Settings → Labs to restore classic @ and # menus.
@@ -324,13 +325,13 @@ function FigmaMentionSettings() {
         }
         control={
           <div className="flex items-center gap-2">
-            <span className="text-secondary-label max-w-40 truncate text-sm sm:max-w-56">
+            <span className="text-secondary-label max-w-40 truncate text-meta sm:max-w-56">
               {mixed ? "Mixed" : projectSummary}
             </span>
             <Button
               type="button"
               size="sm"
-              variant="outline"
+              variant="secondary"
               disabled={mixed}
               onClick={() => setPickerOpen(true)}
             >
@@ -518,32 +519,35 @@ function FigmaProjectPickerDialog({
         <DialogPanel>
           <div className="flex flex-col gap-3">
             {teams.length > 0 ? (
-              <label className="flex flex-col gap-1.5 text-sm">
-                <span className="text-secondary-label text-xs">Team</span>
-                <select
-                  className="border-input bg-background h-8 rounded-md border px-2 text-sm"
+              <label className="flex flex-col gap-1.5 text-meta">
+                <span className="text-secondary-label text-caption">Team</span>
+                <Select
                   value={teamId ?? ""}
-                  aria-label="Figma team"
-                  onChange={(event) => {
-                    const next = event.target.value;
+                  onValueChange={(next) => {
+                    if (next === null) return;
                     setTeamId(next);
                     void loadProjects(next);
                   }}
                 >
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger aria-label="Figma team" size="sm">
+                    <SelectValue>{teams.find((team) => team.id === teamId)?.name}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {teams.map((team) => (
+                      <SelectItem key={team.id} value={team.id}>
+                        {team.name}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
               </label>
             ) : null}
 
             <div className="border-border max-h-64 overflow-y-auto rounded-md border">
               {loading ? (
-                <p className="text-secondary-label px-3 py-4 text-sm">Loading…</p>
+                <p className="text-secondary-label px-3 py-4 text-meta">Loading…</p>
               ) : projects.length === 0 ? (
-                <p className="text-secondary-label px-3 py-4 text-sm">
+                <p className="text-secondary-label px-3 py-4 text-meta">
                   {detail ?? "No projects in this team."}
                 </p>
               ) : (
@@ -552,7 +556,7 @@ function FigmaProjectPickerDialog({
                     const checked = picked.has(project.id);
                     return (
                       <li key={project.id}>
-                        <label className="hover:bg-muted/40 flex cursor-pointer items-center gap-3 px-3 py-2 text-sm">
+                        <label className="hover:bg-muted/40 flex cursor-pointer items-center gap-3 px-3 py-2 text-meta">
                           <Checkbox
                             checked={checked}
                             onCheckedChange={(next) => {
@@ -574,10 +578,10 @@ function FigmaProjectPickerDialog({
               )}
             </div>
             {detail && projects.length > 0 ? (
-              <p className="text-secondary-label text-xs">{detail}</p>
+              <p className="text-secondary-label text-caption">{detail}</p>
             ) : null}
             {picked.size > 0 ? (
-              <p className="text-secondary-label text-xs">{picked.size} selected</p>
+              <p className="text-secondary-label text-caption">{picked.size} selected</p>
             ) : null}
           </div>
         </DialogPanel>

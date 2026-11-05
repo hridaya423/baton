@@ -14,9 +14,10 @@ import {
   CalendarDaysIcon,
   CircleAlertIcon,
   ChevronDownIcon,
+  ServerIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
@@ -63,6 +64,7 @@ import {
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -73,6 +75,7 @@ import {
   WorkspaceBreadcrumbSeparator,
   WorkspaceBreadcrumbText,
 } from "../WorkspaceBreadcrumb";
+import { PageEmptyState } from "../PageEmptyState";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { UsageExplorer } from "./UsageExplorer";
 import { UsageLimitsSection } from "./UsageLimits";
@@ -258,7 +261,7 @@ export function UsagePage() {
     : cursorKeychainAccessEnvironments(selectedEnvironments);
   const environmentNote = (environmentId: string) => {
     const environment = selectedEnvironments.find((entry) => entry.environmentId === environmentId);
-    return environment?.savedAt ? `Offline · as of ${formatSavedAt(environment.savedAt)}` : null;
+    return environment?.savedAt ? `Offline, as of ${formatSavedAt(environment.savedAt)}` : null;
   };
   const sourceMessages = [
     ...new Set(
@@ -301,8 +304,8 @@ export function UsagePage() {
       configured ??
       (instance === provider || instance === PROVIDER_PRESENTATION[provider]?.driverKind
         ? label
-        : `${label} · ${instance}`);
-    return showEnvironments ? `${name} · ${environmentLabel(environmentId)}` : name;
+        : `${label} (${instance})`);
+    return showEnvironments ? `${name} (${environmentLabel(environmentId)})` : name;
   };
 
   const setRange = (next: UsageRange) =>
@@ -621,21 +624,33 @@ export function UsagePage() {
   );
 
   return (
-    <AppRouteModal label="Usage">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 border-b ps-5 pe-2">
+    <AppRouteModal label="Usage" variant="app-panel">
+      <div data-app-modal-pane="" className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="@container/usage-header flex min-h-12 shrink-0 items-center gap-1 ps-5 pe-2">
           {topbarContent}
           <AppRouteModalClose />
         </header>
 
         <ScrollArea className="min-h-0 flex-1">
-          <WorkspacePageContainer width="wide">
+          <WorkspacePageContainer
+            width="wide"
+            className="@container/usage-page max-w-[1040px] gap-5 pt-5.5"
+          >
             {selectedEnvironments.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                {environments.length === 0
-                  ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
-                  : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
-              </p>
+              <PageEmptyState
+                fill
+                icon={<ServerIcon />}
+                title={
+                  environments.length === 0
+                    ? "No environments connected"
+                    : "No environment selected"
+                }
+                description={
+                  environments.length === 0
+                    ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
+                    : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`
+                }
+              />
             ) : showingLimits ? (
               <UsageLimitsSection
                 selectedEnvironmentIds={selectedEnvironmentIds}
@@ -656,14 +671,33 @@ export function UsagePage() {
             ) : shown === null ? (
               <UsageSkeleton />
             ) : !canReadDiagnostics ? (
-              <div className="space-y-2 py-12 text-center text-sm text-muted-foreground">
-                {selectedEnvironments.map((environment) => (
-                  <p key={environment.environmentId}>
-                    {selectedEnvironments.length > 1 ? `${environment.label}: ` : null}
-                    {environment.error}
-                  </p>
-                ))}
-              </div>
+              <UsageNotice
+                icon={CircleAlertIcon}
+                title="Usage unavailable"
+                description={
+                  selectedEnvironments
+                    .filter((environment) => environment.error !== null)
+                    .map((environment) =>
+                      selectedEnvironments.length > 1
+                        ? `${environment.label}: ${environment.error}`
+                        : environment.error,
+                    )
+                    .join(" ") || "Checking access to usage."
+                }
+              />
+            ) : selectedEnvironments.every((environment) => environment.error !== null) ? (
+              <UsageNotice
+                icon={CircleAlertIcon}
+                title="Could not read usage"
+                description={selectedEnvironments
+                  .map((environment) => `${environment.label}: ${environment.error}`)
+                  .join(" ")}
+              >
+                <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+                  <RefreshIcon size="sm" />
+                  Retry
+                </Button>
+              </UsageNotice>
             ) : (
               <>
                 {(isPending ? [] : sourceMessages).map((message) => (
@@ -875,7 +909,7 @@ function CursorEnableButton({
   ) : (
     <Button
       size="sm"
-      variant="outline"
+      variant="secondary"
       disabled={pending}
       aria-busy={pending}
       aria-label={`Enable Cursor usage from ${label}`}
@@ -913,7 +947,12 @@ function CursorEnableRow({
           style={{ backgroundColor: PROVIDER_PRESENTATION.cursor.color }}
         />
         <ProviderMark provider="cursor" className="size-4" />
-        <span className="truncate">Cursor{showEnvironment ? ` · ${label}` : ""}</span>
+        <Tooltip disabled={!showEnvironment}>
+          <TooltipTrigger render={<span tabIndex={showEnvironment ? 0 : undefined} />}>
+            Cursor
+          </TooltipTrigger>
+          <TooltipPopup>{label}</TooltipPopup>
+        </Tooltip>
       </span>
       <CursorEnableButton
         environmentId={environmentId}
@@ -933,8 +972,8 @@ function CursorEnableLimits({
   readonly onEnabled: () => void;
 }) {
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+    <section className="flex flex-col gap-2">
+      <h2 className="flex min-h-7 items-center gap-2 text-sm font-medium text-foreground">
         <ProviderInstanceIcon
           driverKind={ProviderDriverKind.make("cursor")}
           displayName="Cursor"
@@ -944,7 +983,7 @@ function CursorEnableLimits({
         />
         Cursor
       </h2>
-      <div className="flex flex-col items-start gap-3 rounded-lg border border-border/60 p-4">
+      <div className="flex flex-col items-start gap-3 rounded-card border border-transparent surface-card-settings p-4">
         <p className="text-xs text-muted-foreground">{CURSOR_KEYCHAIN_COPY}</p>
         <div className="flex flex-wrap gap-2">
           {environments.map((environment) => (
@@ -1104,7 +1143,7 @@ function UsageEnvironmentFilter({
           const status = environment.offline
             ? environment.savedAt === null
               ? "Offline"
-              : `Offline · as of ${formatSavedAt(environment.savedAt)}`
+              : `Offline, as of ${formatSavedAt(environment.savedAt)}`
             : environment.error !== null
               ? "Unavailable"
               : environment.summary !== null &&
@@ -1175,6 +1214,30 @@ function UsageEnvironmentFilter({
   );
 }
 
+/** The page's empty and error notice, in the shape the pull requests list uses. */
+function UsageNotice({
+  icon: Icon,
+  title,
+  description,
+  children,
+}: {
+  readonly icon: typeof ServerIcon;
+  readonly title: string;
+  readonly description: string;
+  readonly children?: ReactNode;
+}) {
+  return (
+    <Empty size="compact">
+      <Icon aria-hidden className="size-5.5 text-dim-foreground" />
+      <EmptyHeader>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+      {children}
+    </Empty>
+  );
+}
+
 function UsageProviderFilter({
   hiddenProviders,
   onChange,
@@ -1237,7 +1300,7 @@ function UsageProviderFilter({
 function UsageSkeleton() {
   return (
     <>
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
+      <section className="grid gap-6 @min-[48rem]/usage-page:grid-cols-[18rem_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
             <Skeleton className="h-10 w-36" />
@@ -1268,7 +1331,7 @@ function UsageSkeleton() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-foreground">Totals</h2>
+        <h2 className="flex min-h-7 items-center text-sm font-medium text-foreground">Totals</h2>
         <MetricSkeletons
           labels={["Processed tokens", "Cached input", "Uncached input", "Output", "Cache savings"]}
         />
@@ -1282,8 +1345,8 @@ function UsageSkeleton() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
+      <section className="flex flex-col gap-2">
+        <div className="flex min-h-7 items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
           <Skeleton shape="card" className="h-7 w-28" />
         </div>
@@ -1298,7 +1361,7 @@ function MetricSkeletons({ labels }: { readonly labels: readonly string[] }) {
     <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
       {labels.map((label) => (
         <div key={label} className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted-foreground">{label}</span>
+          <span className="text-meta text-muted-foreground">{label}</span>
           <Skeleton className="h-6 w-16" />
         </div>
       ))}

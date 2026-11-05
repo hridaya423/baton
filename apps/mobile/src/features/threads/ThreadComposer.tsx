@@ -844,6 +844,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             <ComposerCommandPopover
               items={composerMenu.items}
               triggerKind={composerMenu.trigger.kind}
+              mentionIndexEnabled={props.serverConfig?.settings.mentionIndexEnabled === true}
               isLoading={composerMenu.isLoading}
               error={composerMenu.error}
               onSelect={composerMenu.onSelect}

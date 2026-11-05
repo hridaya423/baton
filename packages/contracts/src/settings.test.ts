@@ -14,6 +14,9 @@ import {
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
+  DEFAULT_LAYOUT_SETTINGS,
+  DEFAULT_LAYOUT_TEMPLATE,
+  ProjectSettingsOverrides,
   requiredScopesForProjectMutation,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
@@ -38,7 +41,69 @@ const decodeStringOnlyEnvironment = Schema.decodeUnknownSync(
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
+const decodeProjectSettingsOverrides = Schema.decodeUnknownSync(ProjectSettingsOverrides);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("client onboarding completion", () => {
+  it("preserves onboarding completion through settings decoding and subsequent writes", () => {
+    const onboardingCompletedAt = "2026-10-01T12:00:00.000Z";
+    expect(decodeClientSettings({}).onboardingCompletedAt).toBeNull();
+    const settings = decodeClientSettings({ onboardingCompletedAt });
+    expect(decodeClientSettings(encodeClientSettings(settings)).onboardingCompletedAt).toBe(
+      onboardingCompletedAt,
+    );
+    expect(decodeClientSettingsPatch({ onboardingCompletedAt })).toEqual({ onboardingCompletedAt });
+  });
+});
+
+describe("client layout settings", () => {
+  it("preserves absence so old clients can migrate their primary environment's layout", () => {
+    expect(decodeClientSettings({}).layout).toBeUndefined();
+    expect(encodeClientSettings(decodeClientSettings({}))).not.toHaveProperty("layout");
+  });
+
+  it("defaults the remaining fields and round-trips a saved layout", () => {
+    const settings = decodeClientSettings({
+      layout: { terminalPlacement: "new-column" },
+      pinnedProjectKeys: ["project"],
+    });
+    expect(settings).not.toHaveProperty("pinnedProjectKeys");
+    expect(settings.layout).toEqual({
+      ...DEFAULT_LAYOUT_SETTINGS,
+      terminalPlacement: "new-column",
+    });
+    expect(decodeClientSettings(encodeClientSettings(settings))).toEqual(settings);
+    expect(
+      decodeClientSettingsPatch({
+        layout: { template: DEFAULT_LAYOUT_TEMPLATE },
+        pinnedProjectKeys: ["project"],
+      }),
+    ).toEqual({
+      layout: { template: DEFAULT_LAYOUT_TEMPLATE },
+    });
+  });
+
+  it.each([{ terminalPlacement: "new-tab" }, { template: "retired-shape" }])(
+    "strips server layout while retaining unknown project override keys: %j",
+    (layout) => {
+      const input = {
+        layout,
+        projectSettingsOverrides: { project: { layout, defaultAutoPull: true } },
+      };
+      const settings = decodeServerSettings(input);
+      expect(settings).not.toHaveProperty("layout");
+      expect(settings.projectSettingsOverrides).toEqual({
+        project: { layout, defaultAutoPull: true },
+      });
+      expect(decodeServerSettingsPatch(input)).toEqual({
+        projectSettingsOverrides: { project: { layout, defaultAutoPull: true } },
+      });
+      expect(decodeProjectSettingsOverrides({ layout, defaultAutoPull: true })).toEqual({
+        defaultAutoPull: true,
+      });
+    },
+  );
+});
 
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
@@ -308,6 +373,89 @@ describe("ClientSettings notifications", () => {
     expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
+  });
+});
+
+describe("ClientSettings microphone", () => {
+  it("defaults to auto dictation and accepts the other shortcut modes", () => {
+    expect(decodeClientSettings({}).voiceShortcutMode).toBe("auto");
+    expect(decodeClientSettingsPatch({ voiceShortcutMode: "hold" }).voiceShortcutMode).toBe("hold");
+    expect(decodeClientSettingsPatch({ voiceShortcutMode: "toggle" }).voiceShortcutMode).toBe(
+      "toggle",
+    );
+    expect(() => decodeClientSettingsPatch({ voiceShortcutMode: "invalid" })).toThrow();
+  });
+  it("accepts microphone selection patches", () => {
+    expect(decodeClientSettingsPatch({ voiceMicrophone: "studio-mic" }).voiceMicrophone).toBe(
+      "studio-mic",
+    );
+  });
+
+  it("follows the primary transcription environment by default", () => {
+    expect(decodeClientSettings({}).voiceTranscriptionEnvironmentId).toBeNull();
+  });
+
+  it("accepts a transcription environment selection", () => {
+    expect(
+      decodeClientSettingsPatch({ voiceTranscriptionEnvironmentId: "environment-2" })
+        .voiceTranscriptionEnvironmentId,
+    ).toBe("environment-2");
+  });
+});
+
+describe("ServerSettings speech model", () => {
+  it("uses the recommended local transcription model by default", () => {
+    expect(DEFAULT_SERVER_SETTINGS.speechModelId).toBe(
+      "handy-computer/parakeet-unified-en-0.6b-gguf",
+    );
+  });
+
+  it("starts with no custom transcription words", () => {
+    expect(DEFAULT_SERVER_SETTINGS.speechAcceleration).toBe("auto");
+    expect(DEFAULT_SERVER_SETTINGS.speechModelUnloadTimeout).toBe("min_15");
+    expect(DEFAULT_SERVER_SETTINGS.speechLanguage).toBe("auto");
+    expect(DEFAULT_SERVER_SETTINGS.speechCustomWords).toEqual([]);
+    expect(DEFAULT_SERVER_SETTINGS.speechModelDirectories).toEqual([]);
+    expect(DEFAULT_SERVER_SETTINGS.speechRemoveFillerWords).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingEnabled).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.speechCorrectionWord).toBe("");
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).not.toBe(
+      DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+    );
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).toMatchObject({
+      model: "gpt-6-luna",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    });
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingPrompt).toEqual({
+      mode: "default",
+      customInstructions: "",
+    });
+  });
+});
+
+describe("ClientSettings surface style", () => {
+  it("keeps the gradient rim for existing settings without a saved style", () => {
+    expect(decodeClientSettings({}).surfaceStyle).toBe("gradient-rim");
+  });
+
+  it.each(["gradient-rim", "flat", "aqua-blue", "gradient-rim-everywhere"])(
+    "round-trips the %s style",
+    (surfaceStyle) => {
+      const settings = decodeClientSettings({ surfaceStyle });
+      expect(encodeClientSettings(settings).surfaceStyle).toBe(surfaceStyle);
+      expect(decodeClientSettingsPatch({ surfaceStyle }).surfaceStyle).toBe(surfaceStyle);
+    },
+  );
+
+  it("falls back to the gradient rim for a saved style that no longer exists", () => {
+    expect(decodeClientSettings({ surfaceStyle: "brutal" }).surfaceStyle).toBe("gradient-rim");
+    expect(decodeClientSettings({ surfaceStyle: "brushed-metal" }).surfaceStyle).toBe(
+      "gradient-rim",
+    );
+  });
+
+  it("rejects unsupported styles in a patch", () => {
+    expect(() => decodeClientSettingsPatch({ surfaceStyle: "brutal" })).toThrow();
   });
 });
 

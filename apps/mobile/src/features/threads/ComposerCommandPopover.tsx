@@ -107,6 +107,7 @@ export type ComposerCommandItem =
 interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
   readonly triggerKind: ComposerTriggerKind | null;
+  readonly mentionIndexEnabled?: boolean;
   readonly isLoading: boolean;
   readonly error?: string | null;
   readonly onSelect: (item: ComposerCommandItem) => void;
@@ -163,10 +164,13 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   }
 }
 
-function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
+function groupLabel(
+  triggerKind: ComposerTriggerKind | null,
+  mentionIndexEnabled: boolean,
+): string | null {
   switch (triggerKind) {
     case "pull-request":
-      return "Pull requests";
+      return mentionIndexEnabled ? "Pull requests" : "Pull requests and threads";
     case "hash":
       return "Pull requests and issues";
     case "jira":
@@ -190,7 +194,11 @@ function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
   }
 }
 
-function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
+function emptyText(
+  triggerKind: ComposerTriggerKind | null,
+  isLoading: boolean,
+  mentionIndexEnabled: boolean,
+): string {
   if (isLoading) {
     return triggerKind === "path"
       ? "Searching files…"
@@ -210,7 +218,9 @@ function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean):
   }
   switch (triggerKind) {
     case "pull-request":
-      return "No matching pull requests.";
+      return mentionIndexEnabled
+        ? "No matching pull requests."
+        : "No matching pull requests or threads.";
     case "hash":
       return "No matching pull requests or issues.";
     case "jira":
@@ -285,15 +295,13 @@ const CommandRow = memo(function CommandRow(props: {
 export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   props: ComposerCommandPopoverProps,
 ) {
-  const label = groupLabel(props.triggerKind);
+  const label = groupLabel(props.triggerKind, props.mentionIndexEnabled === true);
 
   return (
     <PopoverSurface>
       {label ? (
         <View className="px-3.5 pt-2.5 pb-1">
-          <Text className="text-3xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-            {label}
-          </Text>
+          <Text className="text-3xs font-t3-bold text-foreground-muted">{label}</Text>
         </View>
       ) : null}
       {props.items.length > 0 ? (
@@ -315,7 +323,8 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       ) : (
         <View className="px-3.5 py-2.5">
           <Text className="text-xs text-foreground-tertiary">
-            {props.error ?? emptyText(props.triggerKind, props.isLoading)}
+            {props.error ??
+              emptyText(props.triggerKind, props.isLoading, props.mentionIndexEnabled === true)}
           </Text>
         </View>
       )}

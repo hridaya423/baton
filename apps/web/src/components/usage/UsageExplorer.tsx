@@ -816,7 +816,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
               ))}
             </ToggleGroup>
             {props.zoomed ? (
-              <span className="text-xs">
+              <span className="text-caption">
                 <InlineButton tone="muted" onClick={props.onResetZoom}>
                   Reset zoom
                 </InlineButton>
@@ -869,17 +869,17 @@ export function UsageExplorer(props: UsageExplorerProps) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             {backLabel === null ? null : (
-              <Button size="compact" variant="outline" onClick={back}>
+              <Button size="compact" variant="secondary" onClick={back}>
                 <ArrowLeftIcon aria-hidden />
                 {backLabel}
               </Button>
             )}
-            <h2 className="truncate text-sm font-medium text-foreground">{title}</h2>
+            <h2 className="truncate text-meta text-foreground">{title}</h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {hiddenCount > 0 ? (
-              <span className="text-xs text-muted-foreground">
-                {formatCount(hiddenCount)} hidden ·{" "}
+              <span className="text-caption text-muted-foreground">
+                {formatCount(hiddenCount)} hidden,{" "}
                 <InlineButton
                   tone="muted"
                   onClick={() => setHidden((current) => ({ ...current, [dimension]: new Set() }))}
@@ -937,12 +937,12 @@ export function UsageExplorer(props: UsageExplorerProps) {
             {chips.map((chip) => (
               <span
                 key={chip.label}
-                className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs"
+                className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-caption"
               >
                 <span className="text-muted-foreground">{chip.label}</span>
                 <span className="text-foreground">{chip.value}</span>
                 <Button
-                  size="icon-tiny"
+                  size="icon-micro"
                   variant="ghost"
                   aria-label={`Clear ${chip.label.toLowerCase()} filter`}
                   onClick={chip.clear}
@@ -1003,7 +1003,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
         </div>
       </section>
 
-      <details className="text-xs text-muted-foreground">
+      <details className="text-caption text-muted-foreground">
         <summary className="cursor-pointer select-none">How these numbers are calculated</summary>
         <p className="mt-2 max-w-3xl leading-relaxed">
           Usage is read from each environment's Claude Code, Codex, Grok, OpenCode, Antigravity and
@@ -1098,7 +1098,7 @@ function Headline({
   const unpricedShare = total.records === 0 ? 0 : total.unpricedRecords / total.records;
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-xs text-muted-foreground uppercase">
+      <span className="text-caption text-muted-foreground uppercase">
         {hiddenCount > 0
           ? "Visible total"
           : metric === "cost"
@@ -1106,12 +1106,7 @@ function Headline({
             : "Processed tokens"}
       </span>
       <span className="flex items-baseline gap-2">
-        <span
-          className={cn(
-            "text-4xl font-semibold text-foreground tabular-nums",
-            figureClass(updating),
-          )}
-        >
+        <span className={cn("text-title text-foreground tabular-nums", figureClass(updating))}>
           {format(value)}
         </span>
         <Popover>
@@ -1230,21 +1225,22 @@ function ProviderList({
           />
         </span>
         <div className="flex items-baseline justify-between gap-4">
-          <button
-            type="button"
-            className="flex min-w-0 items-center gap-2 text-left text-sm text-foreground"
+          <Button
+            variant="ghost"
+            size="xs"
+            className="min-w-0 justify-start text-left"
             onClick={() => toggle(keys)}
             aria-pressed={on}
           >
             {label}
-          </button>
+          </Button>
           <span className="flex shrink-0 items-baseline gap-2">
-            <span className="text-2xs opacity-0 group-focus-within/provider:opacity-100 group-hover/provider:opacity-100">
+            <span className="text-micro opacity-0 group-focus-within/provider:opacity-100 group-hover/provider:opacity-100">
               <InlineButton tone="muted" onClick={() => only(keys)}>
                 {isOnly ? "show all" : "only this"}
               </InlineButton>
             </span>
-            <span className="text-sm font-medium text-foreground tabular-nums">
+            <span className="text-meta text-foreground tabular-nums">
               {metric === "cost"
                 ? isUnpriced(totals)
                   ? "Cost unknown"
@@ -1289,14 +1285,14 @@ function ProviderList({
                     style={{ width: `${shareValue * 100}%`, backgroundColor: presentation.color }}
                   />
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  {formatShare(shareValue)} of {metric === "cost" ? "cost" : "tokens"} ·{" "}
+                <span className="text-caption text-muted-foreground">
+                  {formatShare(shareValue)} of {metric === "cost" ? "cost" : "tokens"},{" "}
                   {metric === "cost"
                     ? `${formatTokens(tokensOf(totals))} tokens`
                     : formatUsd(totals.costUsd)}
                   {keys.length > 1 ? (
                     <>
-                      {" · "}
+                      {", "}
                       <InlineButton
                         tone="muted"
                         aria-expanded={isExpanded}
@@ -1354,7 +1350,7 @@ function ColumnsMenu({
 }) {
   return (
     <Menu>
-      <MenuTrigger render={<Button size="compact" variant="outline" />}>
+      <MenuTrigger render={<Button size="compact" variant="secondary" />}>
         <Columns3Icon aria-hidden />
         Columns
       </MenuTrigger>
@@ -1412,7 +1408,7 @@ function ThreadFilters({
   return (
     <>
       <Menu>
-        <MenuTrigger render={<Button size="compact" variant="outline" />}>
+        <MenuTrigger render={<Button size="compact" variant="secondary" />}>
           {label}
           <ChevronDownIcon aria-hidden />
         </MenuTrigger>
@@ -1517,17 +1513,17 @@ function BreakdownTable({
       tabIndex={0}
       onMouseLeave={() => onHoverRow(null)}
     >
-      <table className="w-full text-sm">
+      <table className="w-full text-meta">
         <thead>
-          <tr className="border-b border-border text-right text-xs text-muted-foreground">
-            <th className="min-w-60 py-2 text-left font-normal">
+          <tr className="border-b border-border text-right text-caption text-muted-foreground">
+            <th className="min-w-60 py-2 text-left">
               <button type="button" onClick={() => onSort("name")}>
                 {header.charAt(0).toUpperCase() + header.slice(1)}
                 {sortMark("name")}
               </button>
             </th>
             {columns.map((column) => (
-              <th key={column} className="py-2 pl-6 font-normal whitespace-nowrap">
+              <th key={column} className="py-2 pl-6 whitespace-nowrap">
                 <Hint
                   text={
                     column === "share"
@@ -1558,10 +1554,10 @@ function BreakdownTable({
                 return (
                   <tr key={row.path}>
                     <td colSpan={span} className="py-1.5" style={indent}>
-                      <span className="ms-6 text-xs">
+                      <span className="ms-6 text-caption">
                         <InlineButton tone="muted" onClick={() => onToggleShowAll(row.target)}>
                           {row.kind === "more"
-                            ? `Show ${formatCount(row.hiddenCount)} more ${row.noun} · ${formatShare(row.hiddenShare)}`
+                            ? `Show ${formatCount(row.hiddenCount)} more ${row.noun} (${formatShare(row.hiddenShare)})`
                             : "Show fewer"}
                         </InlineButton>
                       </span>
@@ -1642,7 +1638,7 @@ function BreakdownTable({
                           onToggle={() => onToggleHidden(row.members)}
                         />
                         <span className="text-foreground">
-                          Other · {formatCount(row.members.length)}
+                          Other ({formatCount(row.members.length)})
                         </span>
                       </span>
                     </td>
@@ -1755,7 +1751,7 @@ function BreakdownTable({
                         </Tag>
                       ) : null}
                       {info?.t3 ? (
-                        <span className="shrink-0 text-xs opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100">
+                        <span className="shrink-0 text-caption opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100">
                           <InlineButton tone="muted" onClick={() => onOpenThread(row.key)}>
                             Open
                           </InlineButton>
@@ -1767,7 +1763,7 @@ function BreakdownTable({
                         (row.key === OUTSIDE_PROJECTS || row.key === UNKNOWN_PROJECT) &&
                         !threads.hasThreads
                       ) ? (
-                        <span className="ms-auto flex shrink-0 gap-3 text-xs opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100">
+                        <span className="ms-auto flex shrink-0 gap-3 text-caption opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100">
                           {row.dimension === "model" ? (
                             <InlineButton tone="muted" onClick={() => onOpenModel(row.key)}>
                               Details
@@ -1888,9 +1884,10 @@ function Disclosure({
   readonly onToggle?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      className="flex size-4 shrink-0 items-center justify-center text-muted-foreground"
+    <Button
+      variant="bare"
+      size="icon-micro"
+      className="shrink-0"
       aria-expanded={open}
       aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
       onClick={onToggle}
@@ -1900,7 +1897,7 @@ function Disclosure({
       ) : (
         <ChevronRightIcon className="size-3.5" aria-hidden />
       )}
-    </button>
+    </Button>
   );
 }
 
@@ -1917,14 +1914,19 @@ function Swatch({
   readonly onToggle: () => void;
 }) {
   return (
-    <button
-      type="button"
-      className="size-2.5 shrink-0 rounded-xs border"
-      style={{ backgroundColor: hidden ? "transparent" : color, borderColor: color }}
+    <Button
+      variant="bare"
+      size="icon-micro"
+      className="shrink-0"
       aria-pressed={!hidden}
       aria-label={`${hidden ? "Show" : "Hide"} ${label} on the chart`}
       onClick={onToggle}
-    />
+    >
+      <span
+        className="size-2.5 rounded-xs border"
+        style={{ backgroundColor: hidden ? "transparent" : color, borderColor: color }}
+      />
+    </Button>
   );
 }
 
@@ -1941,7 +1943,7 @@ function Tag({
     <Hint text={hint}>
       <span
         className={cn(
-          "shrink-0 rounded-sm border px-1 text-2xs",
+          "shrink-0 rounded-sm border px-1 text-micro",
           warn
             ? "border-warning/50 text-warning-foreground"
             : "border-border text-muted-foreground",

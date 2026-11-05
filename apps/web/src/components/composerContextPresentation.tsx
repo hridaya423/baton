@@ -15,8 +15,7 @@ import {
   MousePointerClickIcon,
   PaintbrushIcon,
 } from "lucide-react";
-import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { createContext, type ReactElement, type ReactNode, use } from "react";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
 import { composerFileNeedsReattach } from "~/composerDraftStore";
@@ -45,6 +44,7 @@ import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTermin
 import { EnvironmentContextChip } from "./EnvironmentContextChip";
 import { ThreadContextChip } from "./ThreadContextChip";
 import { useLinkedEnvironments } from "~/state/peerLinks";
+import { ComposerContextActionsContext } from "./composerContextActions";
 import {
   createContextPresentationRegistry,
   type ContextPresentationCapability,
@@ -78,24 +78,10 @@ export type ComposerDraftContextRecord =
   | { kind: "figma"; record: import("@t3tools/contracts").FigmaContextRecord }
   | { kind: "issue"; record: import("@t3tools/contracts").IssueContextRecord };
 
-export interface ComposerContextActions {
-  environmentId: EnvironmentId | null;
-  cwd?: string | undefined;
-  expandImage: (imageId: string) => void;
-  expandVideo: (fileId: string) => void;
-  openFile: (fileId: string) => void;
-  openMention: (path: string) => void;
-  openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
-}
-
-export const ComposerContextActionsContext = createContext<ComposerContextActions>({
-  environmentId: null,
-  expandImage: () => {},
-  expandVideo: () => {},
-  openFile: () => {},
-  openMention: () => {},
-  openPullRequest: () => {},
-});
+export {
+  ComposerContextActionsContext,
+  type ComposerContextActions,
+} from "./composerContextActions";
 
 export type ComposerDraftContextRecords = ReadonlyMap<string, ComposerDraftContextRecord>;
 
@@ -327,11 +313,12 @@ function previewAnnotationTooltip(annotation: PreviewAnnotationPayload): string 
 
 function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentContext }) {
   return (
-    <div className="space-y-2 overflow-hidden rounded-lg border border-border/70 bg-background/70 p-3">
+    <div className="space-y-2 overflow-hidden rounded-card border border-border bg-popover p-3">
       <div className="space-y-1">
         <div className="truncate text-xs font-medium text-foreground">{comment.filePath}</div>
         <div className="text-secondary-label text-2xs">
-          {comment.sectionTitle} · {comment.rangeLabel}
+          <span className="block">{comment.rangeLabel}</span>
+          <span className="block">{comment.sectionTitle}</span>
         </div>
       </div>
       {comment.text.trim() ? <ChatMarkdown text={comment.text.trim()} cwd={undefined} /> : null}
@@ -354,7 +341,7 @@ function ComposerPreviewAnnotationDetails({
   const summary = previewAnnotationTooltip(annotation);
   const screenshotUrl = annotation.screenshot?.dataUrl || screenshot?.previewUrl;
   return (
-    <div className="overflow-hidden rounded-lg border border-border/70 bg-background/70">
+    <div className="overflow-hidden rounded-card border border-border bg-popover">
       {screenshotUrl ? (
         <img
           src={screenshotUrl}
@@ -362,7 +349,7 @@ function ComposerPreviewAnnotationDetails({
           className="max-h-64 w-full border-border/70 border-b bg-muted object-contain"
         />
       ) : (
-        <div className="border-border/70 border-b bg-muted/40 px-3 py-2 text-secondary-label text-xs">
+        <div className="border-border border-b bg-muted px-3 py-2 text-secondary-label text-xs">
           Screenshot unavailable
         </div>
       )}
@@ -549,7 +536,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
             icon={<LinkIcon />}
             label={entry.record.label}
             kindLabel="Jira"
-            details={<div className="max-w-xs text-xs">{entry.record.summary}</div>}
+            details={<div className="max-w-xs text-caption">{entry.record.summary}</div>}
             detailsMode="tooltip"
             kind="file"
           />
@@ -566,7 +553,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
             icon={<PaintbrushIcon />}
             label={entry.record.label}
             kindLabel="Figma"
-            details={<div className="max-w-xs text-xs">{entry.record.name}</div>}
+            details={<div className="max-w-xs text-caption">{entry.record.name}</div>}
             detailsMode="tooltip"
             kind="file"
           />
@@ -583,7 +570,7 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
             icon={<CircleDotIcon />}
             label={`${entry.record.label} ${entry.record.title}`.trim()}
             kindLabel="Issue"
-            details={<div className="max-w-xs text-xs">{entry.record.title}</div>}
+            details={<div className="max-w-xs text-caption">{entry.record.title}</div>}
             detailsMode="tooltip"
             kind="file"
           />

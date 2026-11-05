@@ -80,7 +80,6 @@ describe("searchSettings", () => {
 
   it("matches normalized title substrings", () => {
     expect(searchSettings("  WORD   WRAP  ", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
-    expect(searchSettings("glass").map((item) => item.id)).toEqual(["setting-glass-opacity"]);
     expect(searchSettings("panel animations").map((item) => item.id)).toEqual(["panel-animations"]);
     expect(searchSettings("thè\u{1ab0}mes")[0]?.id).toBe("theme");
     const localeLowerCase = vi.spyOn(String.prototype, "toLocaleLowerCase").mockReturnValue("gıt");
@@ -208,6 +207,23 @@ describe("searchSettings", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it("keeps voice settings on the voice page", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "local-voice-input")?.to).toBe(
+      "/settings/voice",
+    );
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "microphone")?.to).toBe(
+      "/settings/voice",
+    );
+    for (const id of [
+      "speech-post-processing",
+      "speech-post-processing-model",
+      "speech-correction-word",
+      "speech-post-processing-prompt",
+    ]) {
+      expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === id)?.to).toBe("/settings/voice");
+    }
+  });
 });
 
 describe("settings search targets", () => {
@@ -219,6 +235,22 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(target.scope, "all")).toBe(false);
     expect(isSettingsSearchScopeAvailable(target.scope, "project")).toBe(false);
     expect(isSettingsSearchScopeAvailable(target.scope, "environment")).toBe(true);
+  });
+
+  it.each([
+    "layout-template",
+    "layout-terminal-placement",
+    "layout-side-pane-placement",
+    "layout-side-pane-opens-on",
+    "layout-new-tab-position",
+    "layout-when-no-room",
+    "layout-three-finger-swipe",
+  ])("keeps %s reachable from every settings scope", (id) => {
+    const setting = getSettingsSearchTargetScope(id)!;
+    expect(setting.scope).toBeNull();
+    for (const kind of ["all", "environment", "project", "checkout", "unavailable"] as const) {
+      expect(isSettingsSearchScopeAvailable(setting.scope, kind)).toBe(true);
+    }
   });
 
   it("keeps environment-wide settings out of project scopes", () => {

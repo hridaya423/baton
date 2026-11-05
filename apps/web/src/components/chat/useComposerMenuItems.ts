@@ -29,9 +29,11 @@ import {
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
-import { useVisibleThreadShells } from "~/state/entities";
+import { useProjects, useVisibleThreadShells } from "~/state/entities";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   mentionIndexEnvironment,
   pullRequestEnvironment,
@@ -54,6 +56,17 @@ const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
+
+/** Describes thread matches during render without retaining the composer's render scope. */
+function makeComposerThreadDescription(projects: ReturnType<typeof useProjects>) {
+  return (shell: ReturnType<typeof useVisibleThreadShells>[number]) => {
+    const project = projects.find(
+      (candidate) =>
+        candidate.environmentId === shell.environmentId && candidate.id === shell.projectId,
+    );
+    return project?.title ?? "Thread";
+  };
+}
 
 /** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
 export function useComposerMenuItems({
@@ -104,7 +117,10 @@ export function useComposerMenuItems({
     composerTriggerKind === "pull-request" || composerTriggerKind === "hash";
   const wantsIssues =
     mentionIndexEnabled && (composerTriggerKind === "issue" || composerTriggerKind === "hash");
-  const wantsThreads = composerTriggerKind === "path" || composerTriggerKind === "thread";
+  const wantsThreads =
+    composerTriggerKind === "path" ||
+    composerTriggerKind === "thread" ||
+    (composerTriggerKind === "pull-request" && !mentionIndexEnabled);
   const wantsFiles = composerTriggerKind === "path" || composerTriggerKind === "file";
   const pathTriggerQuery =
     composerTriggerKind === "path" || composerTriggerKind === "file"
@@ -123,10 +139,12 @@ export function useComposerMenuItems({
   const threadTriggerQuery = wantsThreads ? (composerTrigger?.query ?? "") : "";
   const environmentThreadShells = useVisibleThreadShells(wantsThreads);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(wantsThreads ? [environmentId] : [], threadTriggerQuery, {
-    titlesOnly: true,
-  });
-  // The user's machines feed bare `@` machine matches; the catalog summary is cheap and stable.
+  useThreadSearch(
+    wantsThreads ? [environmentId, ...linkedEnvironments.keys()] : [],
+    threadTriggerQuery,
+    { titlesOnly: true },
+  );
+  // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
   const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
@@ -134,6 +152,27 @@ export function useComposerMenuItems({
     ...identity,
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
   }));
+  const environmentProjects = useProjects();
+  const nowMinute = useNowMinute();
+  // Thread rows read "project · 2h ago", like the sidebar.
+  const describeComposerThread = makeComposerThreadDescription(environmentProjects);
+  const withThreadAge = (item: Extract<ComposerCommandItem, { type: "thread" }>) => {
+    const shell = environmentThreadShells.find(
+      (shell) =>
+        shell.id === item.thread.threadId && shell.environmentId === item.thread.environmentId,
+    );
+    return {
+      ...item,
+      description: shell ? describeComposerThread(shell) : "Thread",
+      environmentLabel:
+        item.thread.environmentId === environmentId
+          ? undefined
+          : linkedEnvironments.get(item.thread.environmentId),
+      metadata: shell
+        ? formatRelativeTimeLabel(shell.updatedAt, Date.parse(`${nowMinute}:00.000Z`))
+        : undefined,
+    };
+  };
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: wantsFiles ? gitCwd : null,
@@ -315,7 +354,8 @@ export function useComposerMenuItems({
         excludeThreadId: activeThreadId,
         query: composerTrigger.query,
         now,
-      });
+        describe: describeComposerThread,
+      }).map(withThreadAge);
       const shellThreadIds = new Set(shellThreadItems.map((item) => item.thread.threadId));
       const indexedThreadItems = (threadMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
         if (hit.thread === undefined) return [];
@@ -376,7 +416,7 @@ export function useComposerMenuItems({
             label: hit.label,
             description:
               hit.jira.status !== undefined
-                ? `${hit.jira.status} · ${hit.description}`
+                ? `${hit.jira.status}, ${hit.description}`
                 : hit.description,
           },
         ];
@@ -511,7 +551,7 @@ export function useComposerMenuItems({
             repository: hit.issue.repository,
             state: hit.issue.state,
             label: hit.label,
-            description: `${hit.issue.state} · ${hit.issue.repository} · ${hit.description}`,
+            description: `${hit.issue.state}, ${hit.issue.repository}, ${hit.description}`,
           },
         ];
       });
@@ -608,13 +648,29 @@ export function useComposerMenuItems({
           isDraft: pullRequest.isDraft,
         },
         label: `#${pullRequest.number}`,
-        description:
+        description: pullRequest.title,
+        metadata:
           pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
-            ? pullRequest.title
-            : `${pullRequest.repository} · ${pullRequest.title}`,
+            ? undefined
+            : pullRequest.repository,
       }));
     };
 
+    if (composerTrigger.kind === "pull-request" && !mentionIndexEnabled) {
+      const hashThreadItems = matchComposerThreadItems({
+        shells: environmentThreadShells,
+        environmentId,
+        linkedEnvironments,
+        excludeThreadId: activeThreadId,
+        query: composerTrigger.query,
+        allowEmptyQuery: true,
+        now,
+        describe: describeComposerThread,
+      }).map(withThreadAge);
+      return questionAttachmentTarget !== null
+        ? hashThreadItems
+        : [...pullRequestItems(), ...hashThreadItems];
+    }
     // Question answers carry thread links, not PR/issue chips.
     if (questionAttachmentTarget !== null) return [];
     if (composerTrigger.kind === "issue") return issueItems();
@@ -785,7 +841,7 @@ export function useComposerMenuItems({
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {
-        return "Pull requests are not available for this project.";
+        return "No matching threads. Pull requests are not available for this project.";
       }
       if (
         mentionIndexEnabled &&
