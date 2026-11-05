@@ -178,6 +178,16 @@ export const visibleToCrew = (): boolean => callerRole() === "crew";
 /** `McpSchema.EnabledWhen` for the tools only a reviewer thread sees. */
 export const visibleToReviewers = (): boolean => callerRole() === "reviewer";
 
+/**
+ * `McpSchema.EnabledWhen` for the tools a captain's server calls on the machine its crew runs on.
+ * It gates `tools/call` as well as the listing, so it is true for exactly the caller that may use them.
+ */
+export const visibleToFullAccessLinks = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.client?.linked === true && scope.client.access === "full-access";
+};
+
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
   ? PreviewAutomationUnavailableError
   : McpCapabilityUnavailableError;

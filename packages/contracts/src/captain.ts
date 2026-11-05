@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
   ProjectId,
@@ -91,6 +92,12 @@ export const CaptainPlacement = Schema.Struct({
   providerInstanceId: Schema.optional(ProviderInstanceId),
   model: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: Schema.optional(RuntimeMode),
+  environmentId: Schema.optional(
+    EnvironmentId.annotate({
+      description:
+        "A linked environment id from t3_environment_links, to run the crew on that machine.",
+    }),
+  ),
 });
 export type CaptainPlacement = typeof CaptainPlacement.Type;
 
@@ -177,6 +184,8 @@ export const CaptainOrder = Schema.Struct({
   touches: Schema.Array(Schema.String),
   dependsOn: Schema.Array(CaptainOrderId),
   placement: CaptainPlacement,
+  /** The linked environment the crew runs on. `null` runs it on this server. */
+  environmentId: Schema.NullOr(EnvironmentId),
   delivery: CaptainOrderDelivery,
   state: CaptainOrderState,
   retries: NonNegativeInt,
@@ -246,6 +255,7 @@ export class CaptainError extends Schema.TaggedError<CaptainError>()("CaptainErr
     "not_reviewer",
     "escalation_not_found",
     "invalid_state",
+    "worktree",
     "storage",
     "dispatch",
   ]),
@@ -288,6 +298,8 @@ export class CaptainError extends Schema.TaggedError<CaptainError>()("CaptainErr
         return `The needs-you item was not found.${detail}`;
       case "invalid_state":
         return `The order is not in a state that allows this.${detail}`;
+      case "worktree":
+        return `The crew's worktree could not be used.${detail}`;
       case "storage":
         return `Captain storage failed.${detail}`;
       case "dispatch":
@@ -446,6 +458,60 @@ export const CaptainMcpCrewReportResult = Schema.Struct({
 });
 export type CaptainMcpCrewReportResult = typeof CaptainMcpCrewReportResult.Type;
 
+/**
+ * The next three tools run on the machine that hosts a remote crew. Only a captain's server calls
+ * them, over a peer link paired with full access; no model sees them.
+ */
+export const CaptainMcpCrewWorktreeCheckInput = Schema.Struct({
+  threadId: ThreadId,
+  command: Schema.optional(TrimmedNonEmptyString),
+  timeoutMinutes: Schema.optional(VerifyTimeoutMinutes),
+  baseRef: Schema.optional(
+    TrimmedNonEmptyString.annotate({ description: "With it, the result carries the diff." }),
+  ),
+});
+export type CaptainMcpCrewWorktreeCheckInput = typeof CaptainMcpCrewWorktreeCheckInput.Type;
+
+export const CaptainMcpCrewWorktreeCheckResult = Schema.Struct({
+  head: Schema.String,
+  check: Schema.optional(
+    Schema.Struct({ exit: Schema.NullOr(Schema.Int), logTail: Schema.String }),
+  ),
+  diff: Schema.optional(
+    Schema.Union([
+      Schema.Struct({ text: Schema.String }),
+      Schema.Struct({ files: Schema.String }),
+      Schema.Struct({ unreadable: Schema.String }),
+    ]),
+  ),
+});
+export type CaptainMcpCrewWorktreeCheckResult = typeof CaptainMcpCrewWorktreeCheckResult.Type;
+
+export const CaptainMcpCrewWorktreePushInput = Schema.Struct({
+  threadId: ThreadId,
+  branch: TrimmedNonEmptyString,
+});
+export type CaptainMcpCrewWorktreePushInput = typeof CaptainMcpCrewWorktreePushInput.Type;
+
+export const CaptainMcpCrewWorktreePushResult = Schema.Struct({
+  outcome: Schema.Literals(["pushed", "up_to_date"]),
+  rewrote: Schema.Boolean,
+});
+export type CaptainMcpCrewWorktreePushResult = typeof CaptainMcpCrewWorktreePushResult.Type;
+
+/** Without `decision` it lists the thread's pending approvals; with `requestId` and `decision` it answers one. */
+export const CaptainMcpCrewApprovalInput = Schema.Struct({
+  threadId: ThreadId,
+  requestId: Schema.optional(RuntimeRequestId),
+  decision: Schema.optional(Schema.Literals(["accept", "decline"])),
+});
+export type CaptainMcpCrewApprovalInput = typeof CaptainMcpCrewApprovalInput.Type;
+
+export const CaptainMcpCrewApprovalResult = Schema.Struct({
+  approvals: Schema.Array(Schema.Struct({ requestId: RuntimeRequestId, prompt: Schema.String })),
+});
+export type CaptainMcpCrewApprovalResult = typeof CaptainMcpCrewApprovalResult.Type;
+
 export const CaptainMcpOrderAnswerInput = Schema.Struct({
   orderId: CaptainOrderId,
   text: OrderText.annotate({ description: "The answer to the crew's question." }),
@@ -600,6 +666,7 @@ export const CaptainBoardOrder = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   dependsOn: Schema.Array(CaptainOrderId),
   placement: CaptainPlacement,
+  environmentId: Schema.NullOr(EnvironmentId),
   lastReport: Schema.NullOr(
     Schema.Struct({
       status: CaptainCrewReportStatus,

@@ -83,6 +83,7 @@ interface OrderRow {
   readonly touches_json: string;
   readonly depends_on_json: string;
   readonly placement_json: string;
+  readonly environment_id: string | null;
   readonly delivery: string;
   readonly state: string;
   readonly retries: number;
@@ -143,6 +144,7 @@ const orderFromRow = Effect.fnUntraced(function* (row: OrderRow) {
     touches: yield* decodeStringArray(row.touches_json),
     dependsOn: yield* decodeOrderIds(row.depends_on_json),
     placement: yield* decodePlacement(row.placement_json),
+    environmentId: row.environment_id,
     delivery: row.delivery,
     state: row.state,
     retries: row.retries,
@@ -435,12 +437,13 @@ const make = Effect.gen(function* () {
     yield* sql`
       INSERT INTO captain_orders
         (order_id, captain_id, thread_id, kind, title, brief, done_check, touches_json,
-         depends_on_json, placement_json, delivery, state, retries, branch, base_ref, report_md,
-         last_report_json, created_at, updated_at, last_activity_at)
+         depends_on_json, placement_json, environment_id, delivery, state, retries, branch,
+         base_ref, report_md, last_report_json, created_at, updated_at, last_activity_at)
       VALUES
         (${order.id}, ${order.captainId}, ${order.threadId}, ${order.kind}, ${order.title},
          ${order.brief}, ${order.doneCheck}, ${encodeStringArray(order.touches)},
-         ${encodeOrderIds(order.dependsOn)}, ${encodePlacement(order.placement)}, ${order.delivery},
+         ${encodeOrderIds(order.dependsOn)}, ${encodePlacement(order.placement)},
+         ${order.environmentId}, ${order.delivery},
          ${order.state}, ${order.retries}, ${order.branch}, ${order.baseRef}, ${order.reportMd},
          ${order.lastReport === null ? null : encodeReport(order.lastReport)},
          ${order.createdAt}, ${order.updatedAt}, ${order.lastActivityAt})

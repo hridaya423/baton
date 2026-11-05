@@ -1,6 +1,12 @@
 import {
+  CaptainMcpCrewApprovalInput,
+  CaptainMcpCrewApprovalResult,
   CaptainMcpCrewReportInput,
   CaptainMcpCrewReportResult,
+  CaptainMcpCrewWorktreeCheckInput,
+  CaptainMcpCrewWorktreeCheckResult,
+  CaptainMcpCrewWorktreePushInput,
+  CaptainMcpCrewWorktreePushResult,
   CaptainMcpEscalateInput,
   CaptainMcpEscalateResult,
   CaptainMcpOrderAnswerInput,
@@ -178,6 +184,45 @@ const CrewReportTool = Tool.make("crew_report", {
   .annotate(Tool.Destructive, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToCrew);
 
+const CrewWorktreeCheckTool = Tool.make("crew_worktree_check", {
+  description:
+    "Runs a command in a crew thread's worktree on this machine and reads its diff, for a captain on a linked machine. Not for agents to call.",
+  parameters: CaptainMcpCrewWorktreeCheckInput,
+  success: CaptainMcpCrewWorktreeCheckResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Check a crew worktree")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToFullAccessLinks);
+
+const CrewWorktreePushTool = Tool.make("crew_worktree_push", {
+  description:
+    "Pushes a crew branch from a crew thread's worktree on this machine, for a captain on a linked machine. Not for agents to call.",
+  parameters: CaptainMcpCrewWorktreePushInput,
+  success: CaptainMcpCrewWorktreePushResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Push a crew branch")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToFullAccessLinks);
+
+const CrewApprovalTool = Tool.make("crew_approval", {
+  description:
+    "Lists or answers the approvals a crew thread on this machine waits on, for a captain on a linked machine. Not for agents to call.",
+  parameters: CaptainMcpCrewApprovalInput,
+  success: CaptainMcpCrewApprovalResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Answer a crew approval")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToFullAccessLinks);
+
 export const CaptainToolkit = Toolkit.make(
   OrderCreateTool,
   OrderListTool,
@@ -190,4 +235,7 @@ export const CaptainToolkit = Toolkit.make(
   EscalateTool,
   CrewReportTool,
   ReviewSubmitTool,
+  CrewWorktreeCheckTool,
+  CrewWorktreePushTool,
+  CrewApprovalTool,
 );

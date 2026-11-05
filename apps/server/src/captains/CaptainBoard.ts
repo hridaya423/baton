@@ -18,6 +18,7 @@ export const toBoardOrder = (order: CaptainOrder): CaptainBoardOrder => ({
   branch: order.branch,
   dependsOn: order.dependsOn,
   placement: order.placement,
+  environmentId: order.environmentId,
   lastReport:
     order.lastReport === null
       ? null

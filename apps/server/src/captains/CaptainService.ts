@@ -12,7 +12,13 @@ import {
   type CaptainEscalationKind,
   type CaptainId,
   type CaptainListInput,
+  type CaptainMcpCrewApprovalInput,
+  type CaptainMcpCrewApprovalResult,
   type CaptainMcpCrewReportInput,
+  type CaptainMcpCrewWorktreeCheckInput,
+  type CaptainMcpCrewWorktreeCheckResult,
+  type CaptainMcpCrewWorktreePushInput,
+  type CaptainMcpCrewWorktreePushResult,
   type CaptainMcpOrderCreateInput,
   type CaptainMcpReviewSubmitInput,
   type CaptainOrder,
@@ -33,6 +39,7 @@ import {
 import {
   T3_CODE_CAPTAIN_ROLE_INSTRUCTIONS,
   t3CrewRoleInstructions,
+  t3RemoteCrewInstructions,
   t3ReviewerRoleInstructions,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import * as Cause from "effect/Cause";
@@ -47,6 +54,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -68,9 +76,9 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { toBoardOrder } from "./CaptainBoard.ts";
 import * as CaptainStore from "./CaptainStore.ts";
 import { installCrewHooks } from "./CrewHooks.ts";
+import { diffOfRange, isCrewBranch } from "./CrewWorktree.ts";
 import { clipError, makeLandGit } from "./LandGit.ts";
 import {
-  REVIEW_DIFF_MAX_BYTES,
   pullRequestBody,
   rebaseConflictMessage,
   rebaseFailedMessage,
@@ -79,6 +87,8 @@ import {
   verifyFailedMessage,
 } from "./captainMessages.ts";
 import { selectAdmissions, slug } from "./OrderPlanner.ts";
+import { makeRemoteCrew, type RemoteBundle, type RemoteCrew } from "./RemoteCrew.ts";
+import { makeRemoteOrders, REMOTE_RETRY_MS } from "./RemoteOrders.ts";
 import { pickReviewer } from "./ReviewerModels.ts";
 import { holdsStall, stallLevelFor } from "./StallRules.ts";
 import { runDoneCheck } from "./Verifier.ts";
@@ -295,6 +305,18 @@ export class CaptainService extends Context.Service<
     /** Runs everything due now and waits for the verifications and reviewer launches it starts. */
     readonly drain: Effect.Effect<void, CaptainError>;
     readonly subscribeSignals: Effect.Effect<PubSub.Subscription<CrewSignal>, never, Scope.Scope>;
+    /** Lets orders run on linked environments. It arrives after the server's links do. */
+    readonly attachRemote: (bundle: RemoteBundle) => Effect.Effect<void>;
+    /** The next three serve a captain on another machine, for a crew thread on this one. */
+    readonly worktreeCheck: (
+      input: CaptainMcpCrewWorktreeCheckInput,
+    ) => Effect.Effect<CaptainMcpCrewWorktreeCheckResult, CaptainError>;
+    readonly worktreePush: (
+      input: CaptainMcpCrewWorktreePushInput,
+    ) => Effect.Effect<CaptainMcpCrewWorktreePushResult, CaptainError>;
+    readonly crewApprovals: (
+      input: CaptainMcpCrewApprovalInput,
+    ) => Effect.Effect<CaptainMcpCrewApprovalResult, CaptainError>;
   }
 >()("t3/captains/CaptainService") {}
 
@@ -481,7 +503,11 @@ const make = Effect.gen(function* () {
       : ({ instanceId, model } satisfies ModelSelection);
   };
 
-  const failOrder = Effect.fn("CaptainService.failOrder")(function* (
+  const failOrder: (
+    captain: Captain,
+    order: CaptainOrder,
+    reason: string,
+  ) => Effect.Effect<void, CaptainError> = Effect.fn("CaptainService.failOrder")(function* (
     captain: Captain,
     order: CaptainOrder,
     reason: string,
@@ -494,6 +520,7 @@ const make = Effect.gen(function* () {
       at,
     });
     if (order.threadId !== null) yield* clearRole(order.threadId);
+    yield* remoteOrders.clearWait(order.id);
     yield* due.invalidate;
     yield* PubSub.publish(signals, {
       kind: "launch_failed",
@@ -504,13 +531,69 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const remote = yield* Ref.make<RemoteCrew | undefined>(undefined);
+  const remoteOrders = yield* makeRemoteOrders({
+    store,
+    remote,
+    providerInstanceOf: (captain) =>
+      getShell(captain.threadId).pipe(Effect.map((shell) => shell?.providerInstanceId)),
+    crewReport: (input) => crewReport(input),
+    touchActivity: (orderId) => touchActivity(orderId),
+    note,
+    openEscalation: (input) => openEscalation(input),
+    failOrder,
+    due,
+    nowIso,
+    scope,
+  });
+
+  const launchRemoteOrder = Effect.fn("CaptainService.launchRemoteOrder")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    orders: ReadonlyArray<CaptainOrder>,
+    captainShell: NonNullable<Effect.Success<ReturnType<typeof getShell>>>,
+  ) {
+    const project = yield* projects
+      .getById(captain.projectId)
+      .pipe(Effect.mapError(threadFailure(captain.threadId)));
+    const requested = order.placement.runtimeMode ?? captain.charter.crewRuntimeMode;
+    const runtimeMode =
+      runtimeModeRank(requested) > runtimeModeRank(captainShell.runtimeMode)
+        ? captainShell.runtimeMode
+        : requested;
+    const branch = `crew/${slug(captain.name, 24)}/${slug(order.title, 32)}-${order.id.slice(-6)}`;
+    const text = [
+      yield* crewMessage(captain, order, orders),
+      t3RemoteCrewInstructions({
+        captainName: captain.name,
+        orderId: order.id,
+        kind: order.kind,
+        doneCheck: order.doneCheck,
+        branch,
+      }),
+    ].join("\n\n");
+    return yield* remoteOrders.launch({
+      captain,
+      order,
+      workspaceRoot: Option.isSome(project) ? project.value.workspaceRoot : undefined,
+      text,
+      modelSelection: modelFor(captain, order, captainShell.modelSelection),
+      runtimeMode,
+      interactionMode: captainShell.interactionMode,
+      branch,
+    });
+  });
+
   const launchOrder = Effect.fn("CaptainService.launchOrder")(function* (
     captain: Captain,
     order: CaptainOrder,
     orders: ReadonlyArray<CaptainOrder>,
   ) {
     const captainShell = yield* getShell(captain.threadId);
-    if (captainShell === null || captainShell.deletedAt !== null) return;
+    if (captainShell === null || captainShell.deletedAt !== null) return undefined;
+    if (order.environmentId !== null) {
+      return yield* launchRemoteOrder(captain, order, orders, captainShell);
+    }
     const project = yield* projects
       .getById(captain.projectId)
       .pipe(Effect.mapError(threadFailure(captain.threadId)));
@@ -606,11 +689,24 @@ const make = Effect.gen(function* () {
 
   const admitCaptain = Effect.fn("CaptainService.admitCaptain")(function* (captain: Captain) {
     if (captain.status !== "active") return;
-    const orders = yield* store.listOrders(captain.id);
-    const ids = selectAdmissions({ crewCap: captain.charter.crewCap, orders });
-    for (const id of ids) {
-      const order = orders.find((candidate) => candidate.id === id);
-      if (order !== undefined) yield* launchOrder(captain, order, orders);
+    // An order waiting on another machine must not hold a crew slot or its files from the orders behind it.
+    const skipped = new Set<CaptainOrderId>();
+    for (let round = 0; round < 3; round++) {
+      const orders = yield* store.listOrders(captain.id);
+      const ids = selectAdmissions({
+        crewCap: captain.charter.crewCap,
+        orders: orders.filter((order) => !skipped.has(order.id)),
+      });
+      let waited = false;
+      for (const id of ids) {
+        const order = orders.find((candidate) => candidate.id === id);
+        if (order === undefined) continue;
+        if ((yield* launchOrder(captain, order, orders)) === "waiting") {
+          skipped.add(id);
+          waited = true;
+        }
+      }
+      if (!waited) return;
     }
   });
 
@@ -636,6 +732,15 @@ const make = Effect.gen(function* () {
       });
     }
     const crewThreadId = order.threadId;
+    if (order.environmentId !== null) {
+      return yield* remoteOrders.run(captain, order, (found) =>
+        found.crew.send(found.actor, found.environmentId, crewThreadId, {
+          text,
+          mode: "queue",
+          key: `captain-followup:${key}`,
+        }),
+      );
+    }
     return yield* threads
       .sendToThread({
         projectId: captain.projectId,
@@ -698,7 +803,23 @@ const make = Effect.gen(function* () {
     label: string,
   ) {
     if (order.pendingFollowUp === null) return;
-    yield* sendFollowUp(captain, order, order.pendingFollowUp, `${order.id}:${order.retries}`);
+    const sent = yield* sendFollowUp(
+      captain,
+      order,
+      order.pendingFollowUp,
+      `${order.id}:${order.retries}`,
+    ).pipe(
+      Effect.as(true),
+      Effect.catchTags({
+        CaptainError: (error) =>
+          order.environmentId === null
+            ? Effect.fail(error)
+            : remoteOrders
+                .waiting(captain, order, `could not reach the crew: ${error.detail ?? "no answer"}`)
+                .pipe(Effect.as(false)),
+      }),
+    );
+    if (!sent) return;
     const moved = yield* store.patchOrder({
       orderId: order.id,
       from: ["verify_failed"],
@@ -707,7 +828,9 @@ const make = Effect.gen(function* () {
       pendingFollowUp: null,
     });
     if (moved) {
+      yield* remoteOrders.clearWait(order.id);
       yield* note(captain, order, `gate:${order.id}:${order.retries}:sent-back`, label);
+      yield* remoteOrders.ensureFollower(captain, { ...order, state: "running" });
     }
   });
 
@@ -809,6 +932,17 @@ const make = Effect.gen(function* () {
     order: CaptainOrder,
   ) {
     const cmd = order.doneCheck;
+    if (order.environmentId !== null) {
+      if (cmd === null) return;
+      const remoteVerify = yield* remoteOrders.verify(
+        captain,
+        order,
+        cmd,
+        captain.charter.verifyTimeoutMinutes ?? 10,
+      );
+      if (remoteVerify !== undefined) yield* applyVerification(captain, order, remoteVerify);
+      return;
+    }
     const cwd = yield* crewCwd(captain, order);
     const timeoutMs = (captain.charter.verifyTimeoutMinutes ?? 10) * 60_000;
     const verify =
@@ -882,33 +1016,50 @@ const make = Effect.gen(function* () {
     reason: string,
     holdQueue: boolean,
   ) =>
-    threads
-      .interruptThread({
-        projectId: captain.projectId,
-        commandId: CommandId.make(`mcp:captain-stop:${threadId}:${order.id}:${order.retries}`),
-        threadId,
-        reason,
-      })
-      .pipe(
-        Effect.andThen(
-          holdQueue
-            ? dispatch(threadId, {
-                type: "queue.hold",
-                commandId: CommandId.make(`server:captain-stop-hold:${threadId}:${order.id}`),
-                threadId,
-              })
-            : Effect.void,
-        ),
-        Effect.catch((error) =>
-          Effect.logWarning("stopping an order's thread failed", {
-            orderId: order.id,
-            cause: error,
+    (order.environmentId !== null && threadId === order.threadId
+      ? remoteOrders.run(captain, order, (found) =>
+          found.crew.interrupt(found.actor, found.environmentId, threadId, {
+            reason,
+            key: `captain-stop:${order.id}:${order.retries}`,
+            stop: holdQueue,
           }),
-        ),
-      );
+        )
+      : threads
+          .interruptThread({
+            projectId: captain.projectId,
+            commandId: CommandId.make(`mcp:captain-stop:${threadId}:${order.id}:${order.retries}`),
+            threadId,
+            reason,
+          })
+          .pipe(
+            Effect.andThen(
+              holdQueue
+                ? dispatch(threadId, {
+                    type: "queue.hold",
+                    commandId: CommandId.make(`server:captain-stop-hold:${threadId}:${order.id}`),
+                    threadId,
+                  })
+                : Effect.void,
+            ),
+          )
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("stopping an order's thread failed", {
+          orderId: order.id,
+          cause: error,
+        }),
+      ),
+    );
 
   const cleanupWorktree = Effect.fn("CaptainService.cleanupWorktree")(
     function* (captain: Captain, order: CaptainOrder, deleteBranch: boolean) {
+      if (order.environmentId !== null) {
+        return yield* Effect.logInfo("leaving a crew worktree on another machine", {
+          orderId: order.id,
+          environmentId: order.environmentId,
+          threadId: order.threadId,
+        });
+      }
       const cwd = yield* projectCwdOf(captain);
       if (cwd === undefined) return;
       const worktree = yield* crewWorktree(order);
@@ -1083,11 +1234,13 @@ const make = Effect.gen(function* () {
     for (const captain of yield* store.listCaptains({ projectId })) {
       if (captain.status !== "active") continue;
       for (const order of yield* store.listOrders(captain.id)) {
+        // A remote crew's branch lives on its own machine, so only local orders are rebased after a land.
         if (
           order.id === landed.id ||
           order.state !== "accepted" ||
           order.branch === null ||
-          order.threadId === null
+          order.threadId === null ||
+          order.environmentId !== null
         ) {
           continue;
         }
@@ -1303,8 +1456,11 @@ const make = Effect.gen(function* () {
     if (projectCwd === undefined || branch === null) {
       return yield* landFailed(captain, order, action, "The order has no branch to push.");
     }
-    const remote = yield* git.resolvePrimaryRemoteName(projectCwd).pipe(Effect.option);
-    if (Option.isNone(remote)) {
+    const remoteCrew = order.environmentId !== null;
+    const remote = remoteCrew
+      ? Option.none<string>()
+      : yield* git.resolvePrimaryRemoteName(projectCwd).pipe(Effect.option);
+    if (!remoteCrew && Option.isNone(remote)) {
       if (openPr) {
         return yield* landFailed(
           captain,
@@ -1321,7 +1477,15 @@ const make = Effect.gen(function* () {
       );
     }
     const pushCwd = (yield* crewWorktree(order)) ?? projectCwd;
-    const pushed = yield* landGit.pushBranch({ cwd: pushCwd, remote: remote.value, branch });
+    const pushed = Option.isNone(remote)
+      ? yield* remoteOrders.push(captain, order, branch).pipe(
+          Effect.map((result) => ({ kind: result.outcome }) as const),
+          Effect.catchTags({
+            CaptainError: (error) =>
+              Effect.succeed({ kind: "error", message: error.detail ?? "no answer" } as const),
+          }),
+        )
+      : yield* landGit.pushBranch({ cwd: pushCwd, remote: remote.value, branch });
     if (pushed.kind === "error") {
       return yield* landFailed(captain, order, action, `Push failed: ${pushed.message}`);
     }
@@ -1352,7 +1516,7 @@ const make = Effect.gen(function* () {
       );
     }
     const landed = yield* landSucceeded(captain, order, "pr", `landed: PR ${url}`, url);
-    if (landed) yield* watchPullRequest(order, url);
+    if (landed && !remoteCrew) yield* watchPullRequest(order, url);
     return landed;
   });
 
@@ -1492,40 +1656,6 @@ const make = Effect.gen(function* () {
       .readFileString(path.join(cwd, "AGENTS.md"))
       .pipe(Effect.orElseSucceed(() => undefined));
 
-  const diffOf = Effect.fn("CaptainService.diffOf")(function* (
-    cwd: string,
-    baseRef: string,
-    branch: string,
-  ) {
-    const range = `${baseRef}...${branch}`;
-    const full = yield* git
-      .execute({
-        operation: "CaptainService.reviewDiff",
-        cwd,
-        args: ["diff", "--no-color", range],
-        maxOutputBytes: REVIEW_DIFF_MAX_BYTES,
-        appendTruncationMarker: true,
-        allowNonZeroExit: true,
-      })
-      .pipe(Effect.result);
-    if (full._tag === "Failure") return { unreadable: full.failure.message };
-    if (full.success.exitCode !== 0) {
-      return { unreadable: full.success.stderr.trim().slice(0, 300) || "git diff failed" };
-    }
-    if (!full.success.stdoutTruncated) {
-      return { text: full.success.stdout.length === 0 ? "(no changes)" : full.success.stdout };
-    }
-    const files = yield* git
-      .execute({
-        operation: "CaptainService.reviewFiles",
-        cwd,
-        args: ["diff", "--no-color", "--name-status", range],
-        allowNonZeroExit: true,
-      })
-      .pipe(Effect.option);
-    return { files: Option.isSome(files) ? files.value.stdout : "(could not list the files)" };
-  });
-
   const launchReviewer = Effect.fn("CaptainService.launchReviewer")(function* (
     captain: Captain,
     order: CaptainOrder,
@@ -1533,11 +1663,24 @@ const make = Effect.gen(function* () {
     const previous = order.review;
     const nextRound = previous === null || previous.finishedAt !== null;
     const round = previous === null ? 1 : nextRound ? previous.round + 1 : previous.round;
-    const crewShell = order.threadId === null ? null : yield* getShell(order.threadId);
-    const cwd = yield* crewCwd(captain, order);
+    const remoteCrew = order.environmentId !== null;
+    const crewShell =
+      remoteCrew || order.threadId === null ? null : yield* getShell(order.threadId);
+    const cwd = remoteCrew ? undefined : yield* crewCwd(captain, order);
+    const captainShell = remoteCrew ? yield* getShell(captain.threadId) : null;
+    const crew = remoteCrew
+      ? captainShell === null
+        ? null
+        : {
+            modelSelection: modelFor(captain, order, captainShell.modelSelection),
+            runtimeMode: order.placement.runtimeMode ?? captain.charter.crewRuntimeMode,
+          }
+      : crewShell === null
+        ? null
+        : { modelSelection: crewShell.modelSelection, runtimeMode: crewShell.runtimeMode };
     if (
-      crewShell === null ||
-      cwd === undefined ||
+      crew === null ||
+      (!remoteCrew && cwd === undefined) ||
       order.baseRef === null ||
       order.branch === null
     ) {
@@ -1564,10 +1707,10 @@ const make = Effect.gen(function* () {
     } else {
       const providers = yield* providerRegistry.getProviders;
       const crewDriver = providers.find(
-        (provider) => provider.instanceId === crewShell.modelSelection.instanceId,
+        (provider) => provider.instanceId === crew.modelSelection.instanceId,
       )?.driver;
       const choice = pickReviewer({
-        crew: crewShell.modelSelection,
+        crew: crew.modelSelection,
         crewDriver: crewDriver ?? ("" as never),
         configured: captain.charter.reviewModel,
         providers,
@@ -1593,10 +1736,13 @@ const make = Effect.gen(function* () {
       });
       if (!written) return;
     }
-    const [diff, agentsMd] = yield* Effect.all([
-      diffOf(cwd, order.baseRef, order.branch),
-      agentsMdOf(cwd),
-    ]);
+    const diff =
+      cwd === undefined
+        ? yield* remoteOrders.reviewDiff(captain, order)
+        : yield* diffOfRange(git, cwd, `${order.baseRef}...${order.branch}`);
+    if (diff === undefined) return;
+    const agentsRoot = cwd ?? (yield* projectCwdOf(captain));
+    const agentsMd = agentsRoot === undefined ? undefined : yield* agentsMdOf(agentsRoot);
     yield* reviewerRole(captain, order, review.threadId);
     const text = reviewerBrief({
       captainName: captain.name,
@@ -1606,10 +1752,11 @@ const make = Effect.gen(function* () {
       round: review.round,
       baseRef: order.baseRef,
       branch: order.branch,
-      worktreePath: cwd,
+      worktreePath: cwd ?? "",
       diff,
       agentsMd,
       previousFindings: review.previousFindings,
+      remoteLabel: cwd === undefined ? yield* remoteOrders.label(captain, order) : undefined,
     });
     yield* launches
       .launch({
@@ -1618,9 +1765,12 @@ const make = Effect.gen(function* () {
         projectId: captain.projectId,
         title: `Review: ${order.title}`,
         modelSelection: review.model,
-        runtimeMode: crewShell.runtimeMode,
+        runtimeMode: crew.runtimeMode,
         interactionMode: "default",
-        workspaceStrategy: { type: "existing_worktree", worktreePath: cwd, branch: order.branch },
+        workspaceStrategy:
+          cwd === undefined
+            ? { type: "root" }
+            : { type: "existing_worktree", worktreePath: cwd, branch: order.branch },
         initialMessage: {
           messageId: MessageId.make(`captain-review:${order.id}:${review.round}:brief`),
           senderThreadId: captain.threadId,
@@ -1775,6 +1925,7 @@ const make = Effect.gen(function* () {
         ...(level > 0 || held ? [nowMs + STALL_RECHECK_MS] : []),
       );
     }
+    if (remoteOrders.hasWaits()) nextDueMs = Math.min(nextDueMs, nowMs + REMOTE_RETRY_MS);
     return Math.max(nextDueMs, nowMs + 1_000);
   });
 
@@ -1789,6 +1940,7 @@ const make = Effect.gen(function* () {
         );
       }
       yield* processGates();
+      yield* remoteOrders.ensureAll();
       return yield* processStalls();
     }),
   );
@@ -1990,6 +2142,36 @@ const make = Effect.gen(function* () {
     ) {
       return yield* invalid("Pass placement.model together with placement.providerInstanceId.");
     }
+    const environmentId = input.placement?.environmentId ?? null;
+    const delivery = input.delivery ?? captain.charter.defaultDelivery;
+    if (environmentId !== null) {
+      if (delivery === "merge") {
+        return yield* invalid(
+          "merge needs the worktree on this machine; use pr or branch. Pass delivery pr or branch for an order on another machine.",
+        );
+      }
+      const crew = yield* Ref.get(remote);
+      const providerInstanceId = captainShell?.providerInstanceId;
+      if (crew === undefined || providerInstanceId === undefined) {
+        return yield* invalid("Linked environments are not available on this server.");
+      }
+      const link = yield* crew
+        .link(
+          { captainId: captain.id, threadId: captain.threadId, providerInstanceId },
+          environmentId,
+        )
+        .pipe(Effect.mapError((error) => invalid(error.message)));
+      if (link === undefined) {
+        return yield* invalid(
+          `${environmentId} is not linked. t3_environment_links lists the machines you can use.`,
+        );
+      }
+      if (link.access !== "full-access") {
+        return yield* invalid(
+          `The link to ${link.label} is paired with ${link.access} access. An order on another machine needs a link paired with full access; ask the user to link it again with full access.`,
+        );
+      }
+    }
     const at = yield* nowIso;
     const created: CaptainOrder = {
       id: CaptainOrderId.make(`order:${yield* newId}`),
@@ -2002,7 +2184,8 @@ const make = Effect.gen(function* () {
       touches: input.touches ?? [],
       dependsOn: input.dependsOn ?? [],
       placement: { ...input.placement, runtimeMode },
-      delivery: input.delivery ?? captain.charter.defaultDelivery,
+      environmentId,
+      delivery,
       state: "queued",
       retries: 0,
       branch: null,
@@ -2052,6 +2235,15 @@ const make = Effect.gen(function* () {
       const order = yield* ownedOrder(captain, orderId);
       if (order.threadId === null) return { order, recentMessages: [] };
       const crewThreadId = order.threadId;
+      if (order.environmentId !== null) {
+        const recentMessages = yield* remoteOrders.recentMessages(
+          captain,
+          order,
+          READ_MESSAGE_LIMIT,
+          READ_MESSAGE_MAX_CHARS,
+        );
+        return { order, recentMessages };
+      }
       const records = yield* threads
         .getThreadRecords(crewThreadId, ["messages"], { messageRoles: ["user", "assistant"] })
         .pipe(Effect.mapError(threadFailure(crewThreadId)));
@@ -2076,6 +2268,16 @@ const make = Effect.gen(function* () {
   ) {
     const crewThreadId = order.threadId as ThreadId;
     const uuid = yield* newId;
+    if (order.environmentId !== null) {
+      const sent = yield* remoteOrders.run(captain, order, (found) =>
+        found.crew.send(found.actor, found.environmentId, crewThreadId, {
+          text,
+          mode,
+          key: `captain-send:${uuid}`,
+        }),
+      );
+      return { delivery: sent.delivery };
+    }
     const result = yield* threads
       .sendToThread({
         projectId: captain.projectId,
@@ -2118,6 +2320,33 @@ const make = Effect.gen(function* () {
     const order = yield* ownedOrder(captain, orderId);
     yield* requireRunningCrew(captain, order);
     const crewThreadId = order.threadId as ThreadId;
+    if (order.environmentId !== null) {
+      const waitingOn = yield* remoteOrders.run(captain, order, (found) =>
+        found.crew.pending(found.actor, found.environmentId, crewThreadId),
+      );
+      const question = waitingOn.questions.at(-1);
+      let remoteDelivery: "started" | "queued" | "steered" | "restarted" = "steered";
+      if (question === undefined) {
+        remoteDelivery = (yield* sendToCrewThread(captain, order, text, "queue")).delivery;
+      } else {
+        yield* remoteOrders.run(captain, order, (found) =>
+          found.crew.answer(
+            found.actor,
+            found.environmentId,
+            crewThreadId,
+            question.requestId,
+            Object.fromEntries(question.questions.map((item) => [item.id, text])),
+          ),
+        );
+      }
+      const closed = yield* store.resolveOrderEscalations({
+        orderId,
+        kind: "decision",
+        resolution: text,
+        at: yield* nowIso,
+      });
+      return { delivery: remoteDelivery, resolved: closed.length };
+    }
     const pending = yield* threads
       .getThreadRecords(crewThreadId, ["turnItems"], { turnItemTypes: ["user_input_request"] })
       .pipe(
@@ -2195,20 +2424,37 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.ignore);
     }
-    yield* threads
-      .interruptThread({
-        projectId: captain.projectId,
-        commandId: CommandId.make(`mcp:captain-retry:${yield* newId}`),
-        threadId: crewThreadId,
-        reason: "The captain retried the order.",
-      })
-      .pipe(Effect.ignore);
-    yield* sendToCrewThread(
-      captain,
-      order,
-      `The captain is retrying this order. Your earlier work is still in the worktree. Start from this brief:\n${brief ?? order.brief}`,
-      "queue",
-    );
+    const turnAround = Effect.gen(function* () {
+      const key = `mcp:captain-retry:${yield* newId}`;
+      yield* order.environmentId === null
+        ? threads
+            .interruptThread({
+              projectId: captain.projectId,
+              commandId: CommandId.make(key),
+              threadId: crewThreadId,
+              reason: "The captain retried the order.",
+            })
+            .pipe(Effect.ignore)
+        : remoteOrders
+            .run(captain, order, (found) =>
+              found.crew.interrupt(found.actor, found.environmentId, crewThreadId, {
+                reason: "The captain retried the order.",
+                key,
+                stop: false,
+              }),
+            )
+            .pipe(Effect.ignore);
+      yield* sendToCrewThread(
+        captain,
+        order,
+        `The captain is retrying this order. Your earlier work is still in the worktree. Start from this brief:\n${brief ?? order.brief}`,
+        "queue",
+      );
+    });
+    yield* order.environmentId === null
+      ? turnAround
+      : remoteOrders.settlingWhile(orderId, turnAround);
+    yield* remoteOrders.ensureFollower(captain, { ...order, state: "running" });
     yield* due.invalidate;
     return {
       ...order,
@@ -2246,6 +2492,8 @@ const make = Effect.gen(function* () {
         return yield* new CaptainError({ reason: "invalid_state", captainId: captain.id, orderId });
       }
       yield* cancelWork(orderId);
+      yield* remoteOrders.cancelFollower(orderId);
+      yield* remoteOrders.clearWait(orderId);
       yield* withdrawMergeApprovals(order, "withdrawn: the order was dropped");
       if (order.review !== null && order.review.finishedAt === null) {
         yield* clearRole(order.review.threadId);
@@ -2281,6 +2529,14 @@ const make = Effect.gen(function* () {
         });
       }
       const effective = delivery ?? order.delivery;
+      if (effective === "merge" && order.environmentId !== null) {
+        return yield* new CaptainError({
+          reason: "invalid_order",
+          captainId: captain.id,
+          orderId,
+          detail: "merge needs the worktree on this machine; use pr or branch.",
+        });
+      }
       const from = [order.state] as const;
       if (effective === "none") {
         yield* store.patchOrder({
@@ -2439,14 +2695,26 @@ const make = Effect.gen(function* () {
           );
           for (const order of yield* store.listOrders(captain.id)) {
             if (order.state === "running" && order.threadId !== null) {
-              yield* threads
-                .interruptThread({
-                  projectId: captain.projectId,
-                  commandId: CommandId.make(`server:captain-pause-stop:${yield* newId}`),
-                  threadId: order.threadId,
-                  reason: "The captain was paused.",
-                })
-                .pipe(Effect.ignore);
+              const threadId = order.threadId;
+              const key = `server:captain-pause-stop:${yield* newId}`;
+              yield* order.environmentId === null
+                ? threads
+                    .interruptThread({
+                      projectId: captain.projectId,
+                      commandId: CommandId.make(key),
+                      threadId,
+                      reason: "The captain was paused.",
+                    })
+                    .pipe(Effect.ignore)
+                : remoteOrders
+                    .run(captain, order, (found) =>
+                      found.crew.interrupt(found.actor, found.environmentId, threadId, {
+                        reason: "The captain was paused.",
+                        key,
+                        stop: false,
+                      }),
+                    )
+                    .pipe(Effect.ignore);
             }
           }
         } else {
@@ -2464,12 +2732,13 @@ const make = Effect.gen(function* () {
           );
           for (const order of yield* store.listOrders(captain.id)) {
             if (order.state !== "running" || order.threadId === null) continue;
-            const shell = yield* getShell(order.threadId);
-            if (shell !== null && shell.activeRunId === null) {
+            const shell = order.environmentId === null ? yield* getShell(order.threadId) : null;
+            if (order.environmentId !== null || (shell !== null && shell.activeRunId === null)) {
               yield* sendFollowUp(captain, order, RESUME_NUDGE, `resume:${order.id}:${at}`).pipe(
                 Effect.ignore,
               );
             }
+            yield* remoteOrders.ensureFollower(captain, order);
           }
         }
       }
@@ -2696,13 +2965,22 @@ const make = Effect.gen(function* () {
       const order =
         escalation.orderId === null ? Option.none() : yield* store.getOrder(escalation.orderId);
       if (Option.isSome(order) && order.value.threadId !== null) {
-        yield* dispatch(order.value.threadId, {
-          type: "runtime-request.respond",
-          commandId: CommandId.make(`server:captain-approval:${escalation.id}`),
-          threadId: order.value.threadId,
-          requestId: escalation.requestId,
-          decision,
-        });
+        const crewThreadId = order.value.threadId;
+        const requestId = escalation.requestId;
+        const owner = yield* store.getCaptain(escalation.captainId);
+        if (order.value.environmentId !== null && Option.isSome(owner)) {
+          yield* remoteOrders.run(owner.value, order.value, (found) =>
+            found.crew.decide(found.actor, found.environmentId, crewThreadId, requestId, decision),
+          );
+        } else {
+          yield* dispatch(crewThreadId, {
+            type: "runtime-request.respond",
+            commandId: CommandId.make(`server:captain-approval:${escalation.id}`),
+            threadId: crewThreadId,
+            requestId,
+            decision,
+          });
+        }
       }
     }
     const at = yield* nowIso;
@@ -2753,6 +3031,132 @@ const make = Effect.gen(function* () {
           : { role: entry.role, captainId: entry.captainId, orderId: entry.orderId },
     );
 
+  const attachRemote: CaptainService["Service"]["attachRemote"] = (bundle) =>
+    Ref.set(remote, makeRemoteCrew(bundle)).pipe(Effect.andThen(kick));
+
+  const hostedShell = Effect.fn("CaptainService.hostedShell")(function* (threadId: ThreadId) {
+    const shell = yield* getShell(threadId);
+    if (shell === null || shell.deletedAt !== null) {
+      return yield* new CaptainError({ reason: "thread_not_found", threadId });
+    }
+    if (shell.linkOrigin === undefined) {
+      return yield* new CaptainError({
+        reason: "worktree",
+        threadId,
+        detail: "That thread was not started by a linked environment.",
+      });
+    }
+    return shell;
+  });
+
+  const hostedWorktree = Effect.fn("CaptainService.hostedWorktree")(function* (threadId: ThreadId) {
+    const worktree = (yield* hostedShell(threadId)).worktreePath;
+    const present =
+      worktree == null
+        ? false
+        : yield* fileSystem.exists(worktree).pipe(Effect.orElseSucceed(() => false));
+    if (worktree == null || !present) {
+      return yield* new CaptainError({
+        reason: "worktree",
+        threadId,
+        detail: "The thread has no worktree on this machine.",
+      });
+    }
+    return worktree;
+  });
+
+  const worktreeCheck: CaptainService["Service"]["worktreeCheck"] = Effect.fn(
+    "CaptainService.worktreeCheck",
+  )(function* (input) {
+    const cwd = yield* hostedWorktree(input.threadId);
+    if (input.baseRef?.startsWith("-") === true) {
+      return yield* new CaptainError({
+        reason: "worktree",
+        threadId: input.threadId,
+        detail: "That is not a ref.",
+      });
+    }
+    const head = (yield* landGit.revision(cwd, "HEAD")) ?? "";
+    const check =
+      input.command === undefined
+        ? undefined
+        : yield* runDoneCheck({
+            cmd: input.command,
+            cwd,
+            timeoutMs: (input.timeoutMinutes ?? 10) * 60_000,
+          }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner));
+    const diff =
+      input.baseRef === undefined
+        ? undefined
+        : yield* diffOfRange(git, cwd, `${input.baseRef}...HEAD`);
+    return {
+      head,
+      ...(check === undefined ? {} : { check: { exit: check.exit, logTail: check.logTail } }),
+      ...(diff === undefined ? {} : { diff }),
+    };
+  });
+
+  const worktreePush: CaptainService["Service"]["worktreePush"] = Effect.fn(
+    "CaptainService.worktreePush",
+  )(function* (input) {
+    const cwd = yield* hostedWorktree(input.threadId);
+    const refused = (detail: string) =>
+      new CaptainError({ reason: "worktree", threadId: input.threadId, detail });
+    // The crew push guard's rule, applied to the push itself: only a crew branch moves.
+    if (!isCrewBranch(input.branch)) {
+      return yield* refused("Only a crew branch, crew/<captain>/<order>, can be pushed from here.");
+    }
+    const current = yield* landGit.currentBranch(cwd);
+    if (current !== input.branch) {
+      return yield* refused(
+        `The worktree is on ${current ?? "a detached HEAD"}, not ${input.branch}.`,
+      );
+    }
+    const remoteName = yield* git.resolvePrimaryRemoteName(cwd).pipe(Effect.option);
+    if (Option.isNone(remoteName)) return yield* refused("No git remote is configured here.");
+    const pushed = yield* landGit.pushBranch({
+      cwd,
+      remote: remoteName.value,
+      branch: input.branch,
+    });
+    if (pushed.kind === "error") return yield* refused(`Push failed: ${pushed.message}`);
+    return {
+      outcome: pushed.kind === "pushed" ? ("pushed" as const) : ("up_to_date" as const),
+      rewrote: pushed.kind === "pushed" && pushed.rewrote,
+    };
+  });
+
+  const crewApprovals: CaptainService["Service"]["crewApprovals"] = Effect.fn(
+    "CaptainService.crewApprovals",
+  )(function* (input) {
+    yield* hostedShell(input.threadId);
+    const records = yield* threads
+      .getThreadRecords(input.threadId, ["turnItems"], { turnItemTypes: ["approval_request"] })
+      .pipe(Effect.mapError(threadFailure(input.threadId)));
+    const pending = records.turnItems.flatMap((item) =>
+      item.type === "approval_request" && item.status === "pending"
+        ? [{ requestId: item.requestId, prompt: item.prompt ?? item.reason ?? item.requestKind }]
+        : [],
+    );
+    const { requestId, decision } = input;
+    if (requestId === undefined || decision === undefined) return { approvals: pending };
+    if (!pending.some((item) => item.requestId === requestId)) {
+      return yield* new CaptainError({
+        reason: "invalid_state",
+        threadId: input.threadId,
+        detail: "That approval is no longer pending.",
+      });
+    }
+    yield* dispatch(input.threadId, {
+      type: "runtime-request.respond",
+      commandId: CommandId.make(`server:captain-approval:hosted:${requestId}`),
+      threadId: input.threadId,
+      requestId,
+      decision,
+    });
+    return { approvals: pending.filter((item) => item.requestId !== requestId) };
+  });
+
   yield* store.releaseAllClaims();
   const startupCaptains = yield* store.listCaptains({});
   for (const captain of startupCaptains) {
@@ -2767,7 +3171,7 @@ const make = Effect.gen(function* () {
   for (const order of yield* store.listCrewOrders()) {
     const captain = startupCaptains.find((candidate) => candidate.id === order.captainId);
     if (order.threadId === null || captain === undefined) continue;
-    yield* crewRole(captain, order);
+    if (order.environmentId === null) yield* crewRole(captain, order);
     if (order.state === "reviewing" && order.review !== null && order.review.finishedAt === null) {
       yield* reviewerRole(captain, order, order.review.threadId);
     }
@@ -2808,6 +3212,10 @@ const make = Effect.gen(function* () {
     touchActivity,
     drain,
     subscribeSignals: PubSub.subscribe(signals),
+    attachRemote,
+    worktreeCheck,
+    worktreePush,
+    crewApprovals,
   });
 });
 

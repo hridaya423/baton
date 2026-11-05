@@ -9,6 +9,7 @@ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReact
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 import * as CaptainReactor from "./captains/CaptainReactor.ts";
+import * as CaptainService from "./captains/CaptainService.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
@@ -826,6 +827,26 @@ const layerMakeRoutes = Layer.mergeAll(
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
+  ),
+  // Captains place orders on linked environments; the service is built below PeerForwarding.
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const captains = yield* CaptainService.CaptainService;
+      const forwarding = yield* PeerForwarding.PeerForwarding;
+      const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const environmentId = yield* ServerEnvironment.ServerEnvironment.pipe(
+        Effect.flatMap((environment) => environment.getEnvironmentId),
+      );
+      yield* captains.attachRemote({
+        forwarding,
+        environmentId,
+        repositoryKeyOf: (workspaceRoot) =>
+          repositoryIdentities.resolve(workspaceRoot).pipe(
+            Effect.map((identity) => identity?.canonicalKey),
+            Effect.orElseSucceed(() => undefined),
+          ),
+      });
+    }),
   ),
 ).pipe(
   Layer.provide(

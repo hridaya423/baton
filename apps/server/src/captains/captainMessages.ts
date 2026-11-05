@@ -45,9 +45,16 @@ export const reviewerBrief = (input: {
     | { readonly unreadable: string };
   readonly agentsMd: string | undefined;
   readonly previousFindings: ReadonlyArray<CaptainReviewFinding>;
+  /** The machine the crew's files are on, when it is not this one. */
+  readonly remoteLabel?: string | undefined;
 }) =>
   [
     `Review order ${input.orderId} for captain "${input.captainName}" (round ${input.round}): ${input.title}`,
+    ...(input.remoteLabel === undefined
+      ? []
+      : [
+          `The crew's files are on ${input.remoteLabel}, another machine, not here. The checkout you are in is the project's, not the crew's. Review from the diff below.`,
+        ]),
     `Brief the crew was given:\n${input.brief}`,
     ...(input.previousFindings.length === 0
       ? []
@@ -57,8 +64,16 @@ export const reviewerBrief = (input: {
     "text" in input.diff
       ? `git diff ${input.baseRef}...${input.branch}:\n${input.diff.text}`
       : "files" in input.diff
-        ? `The diff of ${input.baseRef}...${input.branch} is over ${REVIEW_DIFF_MAX_BYTES / 1024} KB, so these are only the changed files. Read them in the worktree at ${input.worktreePath}:\n${input.diff.files}`
-        : `The diff of ${input.baseRef}...${input.branch} could not be read (${input.diff.unreadable}). Run it yourself in the worktree at ${input.worktreePath}.`,
+        ? `The diff of ${input.baseRef}...${input.branch} is over ${REVIEW_DIFF_MAX_BYTES / 1024} KB, so these are only the changed files. ${
+            input.remoteLabel === undefined
+              ? `Read them in the worktree at ${input.worktreePath}`
+              : "Judge from the list and the brief"
+          }:\n${input.diff.files}`
+        : `The diff of ${input.baseRef}...${input.branch} could not be read (${input.diff.unreadable}). ${
+            input.remoteLabel === undefined
+              ? `Run it yourself in the worktree at ${input.worktreePath}.`
+              : "Review from the brief and say what you could not check."
+          }`,
     ...(input.agentsMd === undefined
       ? []
       : [`The repository's AGENTS.md:\n${input.agentsMd.slice(0, AGENTS_MD_MAX_CHARS)}`]),

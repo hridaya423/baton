@@ -5,7 +5,6 @@ import {
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpTaskCancelResult,
-  type OrchestratorMcpThreadTimelineItem,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type ProjectId,
@@ -16,14 +15,11 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type * as Tool from "effect/ai/Tool";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
@@ -40,23 +36,15 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
+import {
+  FollowRetrySchedule,
+  lastReply as remoteLastReply,
+  projectsWithRepository,
+} from "./RemoteThreads.ts";
 
 /** How long one follow of a remote task waits on its thread there before checking again. */
 const FOLLOW_WAIT_MS = 10 * 60 * 1_000;
-/** A linked environment that stops answering is retried, backing off to this. */
-const FOLLOW_MAX_BACKOFF = Duration.minutes(5);
-/** How a follower retries; tests step it by hand. */
-export const FollowRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>(
-  "t3/peer/RemoteDelegation/FollowRetrySchedule",
-  {
-    defaultValue: () =>
-      Schedule.exponential(Duration.seconds(2)).pipe(
-        Schedule.modifyDelay(({ duration }) =>
-          Effect.succeed(Duration.min(duration, FOLLOW_MAX_BACKOFF)),
-        ),
-      ),
-  },
-);
+export { FollowRetrySchedule };
 
 type ThreadScope = McpInvocationContext.McpThreadInvocationScope;
 
@@ -161,19 +149,7 @@ const make = Effect.gen(function* () {
         message: "Pass target.projectId: this thread's project has no repository to match there.",
       });
     }
-    const matches: Array<{ readonly id: ProjectId; readonly title: string }> = [];
-    let cursor: number | null = 0;
-    while (cursor !== null) {
-      const listed: Tool.Success<typeof ProjectToolkit.tools.t3_project_list> =
-        yield* forwarding.call(scope, ProjectToolkit.tools.t3_project_list, environmentId, {
-          cursor,
-          limit: 100,
-        });
-      matches.push(
-        ...listed.projects.filter((project) => project.repositoryIdentity?.canonicalKey === key),
-      );
-      cursor = listed.nextCursor;
-    }
+    const matches = yield* projectsWithRepository(forwarding, scope, environmentId, key);
     if (matches.length === 1) return matches[0]!.id;
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
@@ -431,58 +407,12 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.asVoid);
 
-  /**
-   * The last reply `runId` gave on the task's thread there, which is its
-   * result, read whole however long it is. A failed run prefers its error
-   * from the activity view over an earlier reply, without taking another run's.
-   */
-  const lastReply = Effect.fn("RemoteDelegation.lastReply")(function* (
+  const lastReply = (
     scope: ThreadScope,
     remote: OrchestrationV2RemoteTaskChild,
     runId: RunId | null,
     failed = false,
-  ) {
-    let reply: OrchestratorMcpThreadTimelineItem | undefined;
-    let error: OrchestratorMcpThreadTimelineItem | undefined;
-    let afterPosition: number | undefined;
-    while (true) {
-      const read = yield* forwarding.readThread(scope, remote.environmentId, {
-        threadId: remote.threadId,
-        view: failed ? "activity" : "messages",
-        limit: 100,
-        ...(afterPosition === undefined ? {} : { afterPosition }),
-      });
-      reply =
-        read.items.findLast(
-          (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
-        ) ?? reply;
-      if (failed) {
-        error =
-          read.items.findLast(
-            (item) => item.type === "error" && (runId === null || item.runId === runId),
-          ) ?? error;
-      }
-      if (!read.hasMore || read.nextPosition === null) break;
-      afterPosition = read.nextPosition;
-    }
-    reply = error ?? reply;
-    if (reply === undefined) return undefined;
-    let text = reply.text ?? "";
-    let textOffset = reply.textTruncated ? (reply.nextTextOffset ?? null) : null;
-    while (textOffset !== null) {
-      const rest = yield* forwarding.readThread(scope, remote.environmentId, {
-        threadId: remote.threadId,
-        itemId: reply.itemId,
-        textOffset,
-        maxCharsPerItem: 50_000,
-      });
-      const part = rest.items[0];
-      if (part === undefined) break;
-      text += part.text ?? "";
-      textOffset = part.textTruncated ? (part.nextTextOffset ?? null) : null;
-    }
-    return text;
-  });
+  ) => remoteLastReply(forwarding, scope, remote, runId, failed);
 
   /**
    * Why following a task can never succeed, if that is what `error` means.

@@ -78,7 +78,7 @@ const make = Effect.gen(function* () {
   ) {
     if (order === null) return `- ${yield* what}`;
     const environmentId = yield* identity.getEnvironmentId;
-    return `- ${order.title} (${order.id}, ${crewLink(environmentId, order.threadId)}): ${yield* what}`;
+    return `- ${order.title} (${order.id}, ${crewLink(order.environmentId ?? environmentId, order.threadId)}): ${yield* what}`;
   });
 
   const boardLine = (orders: ReadonlyArray<CaptainOrder>) => {
