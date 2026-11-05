@@ -9,12 +9,25 @@ git fetch upstream
 git rebase upstream/main
 ```
 
-Each adopted upstream PR lands as one commit titled `adopt #NNNNN: <title>` and gets a row below.
+Each adopted upstream PR lands as one commit titled `adopt #NNNNN: <title>` and gets a row below, pinned to the PR head that was taken. Re-adopting a PR means diffing its new head against the pinned one.
 
 ## Adopted PRs
 
-| PR  | Title | Commit |
-| --- | ----- | ------ |
+| PR                                                       | Title                                                                                                         | Pinned head |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------- |
+| [#30647](https://github.com/pingdotgg/t3code/pull/30647) | fix(server): switching Codex accounts releases the old account's writer                                       | `664807c07` |
+| [#28595](https://github.com/pingdotgg/t3code/pull/28595) | feat: continue on another account with usage left when one runs out                                           | `a36652352` |
+| [#30457](https://github.com/pingdotgg/t3code/pull/30457) | fix(server): let parents recover their delegated children across accounts                                     | `5c2bf6be3` |
+| [#30362](https://github.com/pingdotgg/t3code/pull/30362) | fix(web): match subscription accounts across environments                                                     | `e0fd933b2` |
+| [#29508](https://github.com/pingdotgg/t3code/pull/29508) | fix(server): an external Codex account swap releases the running app-server (ported to Effect 4.1.2 `Digest`) | `c072045ef` |
+| [#28727](https://github.com/pingdotgg/t3code/pull/28727) | feat(worktrees): optionally create worktrees with git-worktree-fast on macOS (reads `PATH` via `HostProcess`) | `3f713f6e1` |
+| [#22256](https://github.com/pingdotgg/t3code/pull/22256) | feat(web): add a setting to share the right panel width across threads                                        | `cd8aedcfc` |
+| [#25598](https://github.com/pingdotgg/t3code/pull/25598) | feat(web): thread details can stay closed in new threads                                                      | `8b6db956b` |
+| [#24621](https://github.com/pingdotgg/t3code/pull/24621) | feat(ui): configurable list.next / list.previous keybindings                                                  | `b05440064` |
+| [#28440](https://github.com/pingdotgg/t3code/pull/28440) | feat(composer): reorder queued messages on web and mobile                                                     | `9c6a10a5c` |
+| [#27031](https://github.com/pingdotgg/t3code/pull/27031) | feat(web,mobile): a Transcript view setting opens finished turns and rows                                     | `22ff6f4c5` |
+| [#31201](https://github.com/pingdotgg/t3code/pull/31201) | feat(composer): local mention index for PRs, threads, Jira, issues, and Figma                                 | `6487590eb` |
+| [#15902](https://github.com/pingdotgg/t3code/pull/15902) | feat(usage): break usage down by project, thread, account and environment                                     | `ea79fa30e` |
 
 ## Where Baton differs
 
