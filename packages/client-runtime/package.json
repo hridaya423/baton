@@ -235,6 +235,10 @@
       "types": "./src/state/captainBoard.ts",
       "default": "./src/state/captainBoard.ts"
     },
+    "./state/media": {
+      "types": "./src/state/media.ts",
+      "default": "./src/state/media.ts"
+    },
     "./state/captainPresentation": {
       "types": "./src/state/captainPresentation.ts",
       "default": "./src/state/captainPresentation.ts"
