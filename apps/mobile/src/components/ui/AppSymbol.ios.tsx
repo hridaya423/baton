@@ -1,3 +1,4 @@
+import IconAnchor from "@tabler/icons-react-native/IconAnchor";
 import IconGitBranch from "@tabler/icons-react-native/IconGitBranch";
 import IconGitMerge from "@tabler/icons-react-native/IconGitMerge";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
@@ -14,6 +15,7 @@ export type { SFSymbol } from "expo-symbols";
 export type { AppSymbolName } from "./AppSymbol";
 
 const CUSTOM_ICONS = {
+  anchor: IconAnchor,
   "file.diff": IconFileDiff,
   "arrow.triangle.pull": IconGitPullRequest,
   "arrow.triangle.merge": IconGitMerge,

@@ -56,6 +56,9 @@ import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { useThreadListSearchMatches } from "../threads/useThreadListSearchMatches";
 import { useThreadListV2 } from "../threads/useThreadListV2";
+import { NeedsYouEntry } from "../captain/NeedsYouEntry";
+import { omitCaptainNestedThreads } from "../captain/captainThreadList";
+import { useCaptainSidebarIndexes } from "../../state/captains";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
@@ -460,6 +463,7 @@ export function HomeScreen(props: HomeScreenProps) {
     titleRegenerationEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
+  const captainIndexes = useCaptainSidebarIndexes();
   const pendingOrder = usePendingThreadOrder();
   const {
     layout: threadListV2Layout,
@@ -467,7 +471,7 @@ export function HomeScreen(props: HomeScreenProps) {
     contentOnlyThreadKeys,
     olderSettledShelf,
   } = useThreadListV2({
-    threads: props.threads,
+    threads: omitCaptainNestedThreads(props.threads, captainIndexes),
     pendingTasks: props.pendingTasks,
     environmentId: props.selectedEnvironmentId,
     projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
@@ -750,6 +754,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
+      <NeedsYouEntry />
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           gutter={sidebarSurface ? 8 : 0}

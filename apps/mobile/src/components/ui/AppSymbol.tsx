@@ -1,5 +1,6 @@
 import type { Icon } from "@tabler/icons-react-native/types";
 /* Package-root imports eagerly register the entire Tabler icon set in Metro. */
+import IconAnchor from "@tabler/icons-react-native/IconAnchor";
 import IconAdjustmentsHorizontal from "@tabler/icons-react-native/IconAdjustmentsHorizontal";
 import IconAlignLeft from "@tabler/icons-react-native/IconAlignLeft";
 import IconAlertCircle from "@tabler/icons-react-native/IconAlertCircle";
@@ -138,6 +139,7 @@ import type { AndroidSymbol, SFSymbol, SymbolViewProps } from "expo-symbols";
 import { withUniwind } from "uniwind";
 
 const ANDROID_ICON_BY_SF_SYMBOL = {
+  anchor: IconAnchor,
   plusminus: IconPlusMinus,
   "git.pull-request.closed": IconGitPullRequestClosed,
   "git.pull-request.draft": IconGitPullRequestDraft,
@@ -285,13 +287,23 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "xmark.circle.fill": IconCircleXFilled,
 } satisfies Partial<
   Record<
-    SFSymbol | "git.pull-request.closed" | "git.pull-request.draft" | "git.commit" | "file.diff",
+    | SFSymbol
+    | "git.pull-request.closed"
+    | "git.pull-request.draft"
+    | "git.commit"
+    | "file.diff"
+    | "anchor",
     Icon
   >
 >;
 const SF_ICON_LOOKUP: Partial<
   Record<
-    SFSymbol | "git.pull-request.closed" | "git.pull-request.draft" | "git.commit" | "file.diff",
+    | SFSymbol
+    | "git.pull-request.closed"
+    | "git.pull-request.draft"
+    | "git.commit"
+    | "file.diff"
+    | "anchor",
     Icon
   >
 > = ANDROID_ICON_BY_SF_SYMBOL;

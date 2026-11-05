@@ -83,6 +83,7 @@ import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { CaptainCrewRail, CaptainGlyph, CaptainNeedsYouBadge } from "../captain/CaptainRowMarks";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 // long-press actions. State reads through tinted status pills and text
@@ -1242,6 +1243,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
           </View>
         ) : null}
+        <View className="justify-center" style={{ height: titleLineHeight }}>
+          <CaptainGlyph
+            environmentId={thread.environmentId}
+            threadId={thread.id}
+            size={projectIconSize * 0.8}
+            tintClassName={
+              selected
+                ? selectedThreadRowColors.iconTintClassName
+                : rowAppearance.mutedIconTintClassName
+            }
+          />
+        </View>
         <Text
           className={cn(
             "flex-1 text-base",
@@ -1266,6 +1279,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {thread.title}
         </Text>
         <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
+          <CaptainNeedsYouBadge environmentId={thread.environmentId} threadId={thread.id} />
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
             <SymbolView
@@ -1430,6 +1444,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </View>
         ) : null}
       </View>
+      <CaptainCrewRail
+        environmentId={thread.environmentId}
+        threadId={thread.id}
+        leftInset={titleTextInset}
+        textClassName={
+          selected
+            ? selectedThreadRowColors.mutedForegroundClassName
+            : rowAppearance.tertiaryForegroundClassName
+        }
+      />
     </>
   );
 
@@ -1545,6 +1569,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               ? props.snoozeWakeLabelText
               : timeLabel}
           </Text>
+        </View>
+        <View className={cn(THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME, "pt-0", sidebarPane && "px-3")}>
+          <CaptainCrewRail
+            environmentId={thread.environmentId}
+            threadId={thread.id}
+            leftInset={props.project ? projectIconSize + 8 : 0}
+            textClassName={
+              selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : rowAppearance.tertiaryForegroundClassName
+            }
+          />
         </View>
       </RowPressable>
     );

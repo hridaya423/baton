@@ -124,7 +124,10 @@ import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
+import { SettingsMediaRouteScreen } from "./features/settings/SettingsMediaRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
+import { CaptainBoardScreen } from "./features/captain/CaptainBoardScreen";
+import { NeedsYouScreen } from "./features/captain/NeedsYouScreen";
 import { SettingsLabsRouteScreen } from "./features/settings/ThreadSettingsSections";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
 import { openSettings, settingsOpenIn } from "./features/settings/settings-navigation";
@@ -204,6 +207,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsProviderAccountsRouteScreen,
     linking: "settings/provider-accounts",
     options: settingsPage("Providers"),
+  }),
+  SettingsMedia: createNativeStackScreen({
+    screen: SettingsMediaRouteScreen,
+    linking: "settings/media",
+    options: settingsPage("Media"),
   }),
   SettingsEnvironmentMaintenance: createNativeStackScreen({
     screen: SettingsEnvironmentMaintenanceRouteScreen,
@@ -540,6 +548,16 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ThreadRouteScreen,
       linking: { path: "threads/:environmentId?/:threadId?", alias: ["new/draft"] },
       options: pageRoute({ duoMinimize: "onScrollUp" }),
+    }),
+    CaptainBoard: createNativeStackScreen({
+      screen: CaptainBoardScreen,
+      linking: `${THREAD_LINKING_PREFIX}/crew`,
+      options: pageRoute({ title: "Crew board" }),
+    }),
+    NeedsYou: createNativeStackScreen({
+      screen: NeedsYouScreen,
+      linking: "needs-you",
+      options: pageRoute({ title: "Needs you" }),
     }),
     NewTaskProject: createNativeStackScreen({
       screen: NewTaskRouteScreen,

@@ -11,6 +11,10 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
+import { captainMenuState } from "@t3tools/client-runtime/state/captainPresentation";
+import { buildCaptainMenuActions, isCaptainMenuAction } from "../captain/captain-menu";
+import { useCaptainThreadActions } from "../captain/useCaptainThreadActions";
+import { captainEnvironment, useCaptainSidebarIndexes } from "../../state/captains";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useWorkspaceListNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
@@ -38,6 +42,16 @@ export function ThreadTitleMenu(props: {
   const canOperate =
     useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope) && props.canMutate;
   const handlers = useThreadListActions();
+  const captainActions = useCaptainThreadActions();
+  const captainState = captainMenuState(
+    thread,
+    useCaptainSidebarIndexes().get(thread.environmentId),
+  );
+  const captainPermissions = {
+    make: useAtomValue(captainEnvironment.makeCaptain.permissionAtom(thread.environmentId)),
+    release: useAtomValue(captainEnvironment.releaseCaptain.permissionAtom(thread.environmentId)),
+    update: useAtomValue(captainEnvironment.updateCaptain.permissionAtom(thread.environmentId)),
+  };
   const navigation = useNavigation();
   const returnToList = useWorkspaceListNavigation("threads");
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
@@ -58,6 +72,7 @@ export function ThreadTitleMenu(props: {
     canOperate,
     hasQueuedMessages: queuedKeys.has(scopedThreadKey(thread.environmentId, thread.id)),
     now,
+    captain: canOperate ? buildCaptainMenuActions(captainState, captainPermissions) : [],
   });
   const android = Platform.OS === "android";
   const inlineSubtitle = android && props.compact && props.subtitle !== "";
@@ -73,6 +88,10 @@ export function ThreadTitleMenu(props: {
         onOpen={() => setNow(new Date())}
         onAction={(event) => {
           if (!threadTitleMenuOffers(actions, event)) return;
+          if (isCaptainMenuAction(event)) {
+            void captainActions(event, thread);
+            return;
+          }
           switch (event) {
             case "settle":
               void handlers.settleThread(thread);

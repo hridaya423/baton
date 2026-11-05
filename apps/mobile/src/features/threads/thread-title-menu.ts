@@ -20,6 +20,8 @@ export function buildThreadTitleMenu(input: {
   readonly canOperate: boolean;
   readonly hasQueuedMessages: boolean;
   readonly now: Date;
+  /** Make captain, Release, Pause, Resume and the crew board, already limited to what the user may do. */
+  readonly captain?: ReadonlyArray<MenuAction>;
 }): MenuAction[] {
   const { thread, capabilities, now } = input;
   const actions: MenuAction[] = [];
@@ -61,6 +63,7 @@ export function buildThreadTitleMenu(input: {
           : { id: "pin", title: "Pin", image: "pin" },
       );
     }
+    actions.push(...(input.captain ?? []));
     actions.push(
       { id: "rename", title: "Rename", image: "square.and.pencil" },
       ...buildThreadTitleRegenerationMenuItems({

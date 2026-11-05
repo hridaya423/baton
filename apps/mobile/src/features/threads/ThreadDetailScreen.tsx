@@ -174,6 +174,7 @@ import type {
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
+import { CaptainThreadBanner } from "../captain/CaptainThreadBanner";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
@@ -1644,6 +1645,10 @@ function ThreadDetailBody(
                         onDismiss={() => props.onDismissFeedback(submission.id)}
                       />
                     ))}
+                    <CaptainThreadBanner
+                      environmentId={props.selectedThread.environmentId}
+                      threadId={props.selectedThread.id}
+                    />
                     {props.canOperateThread ? (
                       <ManagedRuntimeModeNotice
                         threadKey={selectedThreadKey}

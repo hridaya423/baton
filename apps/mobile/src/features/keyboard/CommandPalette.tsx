@@ -55,6 +55,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { countOpenCaptainEscalations } from "@t3tools/client-runtime/state/captainPresentation";
+import { useCaptainBoards } from "../../state/captains";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
 import { pickTriageEnvironment } from "../triage/triageTarget";
@@ -90,6 +92,7 @@ const ACTION_ICONS: Record<string, AppSymbolName> = {
   newThread: "square.and.pencil",
   addProject: "folder.badge.plus",
   settings: "gearshape",
+  needsYou: "bell.badge",
   appearance: "paintbrush",
   environments: "desktopcomputer",
   usage: "chart.bar.xaxis",
@@ -288,6 +291,7 @@ export function CommandPalette(props: {
       .filter((match) => match.source === "user" || match.source === "assistant")
       .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
   );
+  const openCaptainEscalations = countOpenCaptainEscalations(useCaptainBoards()).open;
   const items = useMemo(() => {
     const actions: CommandPaletteItem[] = [
       {
@@ -347,6 +351,19 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    if (openCaptainEscalations > 0) {
+      actions.push({
+        key: "needsYou",
+        kind: "action",
+        title: "Needs you",
+        detail:
+          openCaptainEscalations === 1
+            ? "1 item waiting on you"
+            : `${openCaptainEscalations} items waiting on you`,
+        searchTerms: ["captain", "crew", "approve", "decision", "escalation"],
+        run: () => navigation.navigate("NeedsYou"),
+      });
+    }
     if (canTriage) {
       actions.push({
         key: "triage",
@@ -466,6 +483,7 @@ export function CommandPalette(props: {
     activeThreadRef,
     environments.length,
     canTriage,
+    openCaptainEscalations,
     navigation,
     projects,
     runCommand,
