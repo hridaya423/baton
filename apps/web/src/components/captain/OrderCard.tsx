@@ -18,7 +18,9 @@ import { useState } from "react";
 
 import { readLocalApi } from "../../localApi";
 import { captainEnvironment } from "../../state/captains";
+import { useConnectedEnvironmentIds } from "../../state/environments";
 import { useThreadShell } from "../../state/entities";
+import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
@@ -142,8 +144,15 @@ export function OrderCard(props: {
 }) {
   const { environmentId, captain, order } = props;
   const state = boardOrderState(order);
+  const crewEnvironmentId = order.environmentId ?? environmentId;
+  const linkedNames = useLinkedEnvironments(order.environmentId === null ? null : environmentId);
+  const machine =
+    order.environmentId === null
+      ? null
+      : (linkedNames.get(order.environmentId) ?? "another machine");
+  const crewConnected = useConnectedEnvironmentIds().includes(crewEnvironmentId);
   const crewShell = useThreadShell(
-    order.threadId === null ? null : scopeThreadRef(environmentId, order.threadId),
+    order.threadId === null ? null : scopeThreadRef(crewEnvironmentId, order.threadId),
   );
   const openCrewThread = useOpenCrewThread();
   const landOrder = useAtomCommand(captainEnvironment.landOrder, { reportFailure: false });
@@ -245,6 +254,11 @@ export function OrderCard(props: {
           </Text>
         ) : null}
       </div>
+      {machine === null ? null : (
+        <Text variant="meta" tone="muted">
+          On {machine}
+        </Text>
+      )}
       {order.branch === null ? null : (
         <Text variant="meta" tone="muted" mono render={<div className="flex min-w-0" />}>
           <MiddleTruncate value={order.branch} />
@@ -327,11 +341,11 @@ export function OrderCard(props: {
         <EscalationCard key={escalation.id} environmentId={environmentId} escalation={escalation} />
       ))}
       <div className="flex flex-wrap items-center gap-2">
-        {order.threadId === null ? null : (
+        {order.threadId === null || !crewConnected ? null : (
           <Button
             size="compact"
             variant="ghost"
-            onClick={() => openCrewThread(scopeThreadRef(environmentId, order.threadId!))}
+            onClick={() => openCrewThread(scopeThreadRef(crewEnvironmentId, order.threadId!))}
           >
             Open thread
           </Button>

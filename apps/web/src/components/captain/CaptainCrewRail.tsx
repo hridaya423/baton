@@ -4,10 +4,13 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { useCaptainCrew } from "../../state/captains";
+import { useConnectedEnvironmentIds } from "../../state/environments";
 import { useThreadShell } from "../../state/entities";
+import { useLinkedEnvironments } from "../../state/peerLinks";
 import { SidebarMenuButton } from "../ui/sidebar";
 import { StatusDot, type StatusDotTone } from "../ui/status-dot";
 import { MiddleTruncate } from "../ui/middle-truncate";
+import { Text } from "../ui/text";
 import { useOpenCrewThread } from "./useOpenCrewThread";
 
 const DOT: Record<CaptainCrewDot, { readonly tone: StatusDotTone; readonly label: string }> = {
@@ -21,6 +24,8 @@ function CrewRailRow(props: {
   threadId: ThreadId;
   dot: CaptainCrewDot;
   fallbackTitle: string;
+  machine: string | null;
+  connected: boolean;
 }) {
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
   const shell = useThreadShell(threadRef);
@@ -38,7 +43,8 @@ function CrewRailRow(props: {
         size="sm"
         isActive={isActive}
         aria-current={isActive ? "page" : undefined}
-        aria-label={`${title}, ${dot.label}`}
+        disabled={!props.connected}
+        aria-label={`${title}, ${dot.label}${props.machine === null ? "" : `, on ${props.machine}`}`}
         data-testid="captain-crew-row"
         data-crew-dot={props.dot}
         onClick={() => void openThread(threadRef)}
@@ -47,6 +53,11 @@ function CrewRailRow(props: {
         <span className="flex min-w-0 flex-1">
           <MiddleTruncate value={title} showTitle={false} />
         </span>
+        {props.machine === null ? null : (
+          <Text variant="micro" tone="muted" render={<span className="shrink-0" />}>
+            {props.machine}
+          </Text>
+        )}
       </SidebarMenuButton>
     </li>
   );
@@ -55,6 +66,10 @@ function CrewRailRow(props: {
 /** A captain's crew, nested under its row. Rows are plain buttons, so they stay out of the list's arrow-key order. */
 export function CaptainCrewRail(props: { environmentId: EnvironmentId; threadId: ThreadId }) {
   const crew = useCaptainCrew(props.environmentId, props.threadId);
+  const linkedNames = useLinkedEnvironments(
+    crew.some((entry) => entry.order.environmentId !== null) ? props.environmentId : null,
+  );
+  const connectedEnvironmentIds = useConnectedEnvironmentIds();
   if (crew.length === 0) return null;
   return (
     <ul
@@ -65,10 +80,18 @@ export function CaptainCrewRail(props: { environmentId: EnvironmentId; threadId:
       {crew.map((entry) => (
         <CrewRailRow
           key={entry.threadId}
-          environmentId={props.environmentId}
+          environmentId={entry.order.environmentId ?? props.environmentId}
           threadId={entry.threadId}
           dot={entry.dot}
           fallbackTitle={entry.order.title}
+          machine={
+            entry.order.environmentId === null
+              ? null
+              : (linkedNames.get(entry.order.environmentId) ?? "another machine")
+          }
+          connected={connectedEnvironmentIds.includes(
+            entry.order.environmentId ?? props.environmentId,
+          )}
         />
       ))}
     </ul>
