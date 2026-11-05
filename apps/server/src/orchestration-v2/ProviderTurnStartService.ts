@@ -58,6 +58,8 @@ import {
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { formatSentFromContext } from "./sentFromContext.ts";
+import * as ThreadRoles from "./ThreadRoles.ts";
+import { t3RolePrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -162,6 +164,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const threadRoles = yield* Effect.serviceOption(ThreadRoles.ThreadRoles);
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const resolveRecreateBase = Effect.fn("ProviderTurnStartService.resolveRecreateBase")(
@@ -849,12 +852,19 @@ export const layer: Layer.Layer<
         records: message.context?.records ?? [],
       });
       // Adapters run slash commands (`/compact`, skills) only from the start of the text.
-      const userText =
+      const sentText =
         message.sentFrom === undefined || promptText.trimStart().startsWith("/")
           ? promptText
           : `${formatSentFromContext(message.sentFrom)}
 
 ${promptText}`;
+      const roleEntry = Option.isNone(threadRoles)
+        ? undefined
+        : yield* threadRoles.value.get(projection.thread.id);
+      const userText =
+        roleEntry === undefined || promptText.trimStart().startsWith("/")
+          ? sentText
+          : t3RolePrompt(sentText, roleEntry.instructions);
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
