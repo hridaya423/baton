@@ -35,6 +35,7 @@ import { Route as ChatSettingsScheduledTasksRouteImport } from './routes/_chat.s
 import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settings.providers'
 import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.settings.projects'
 import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_chat.settings.open-source-licenses'
+import { Route as ChatSettingsMediaRouteImport } from './routes/_chat.settings.media'
 import { Route as ChatSettingsMaintenanceRouteImport } from './routes/_chat.settings.maintenance'
 import { Route as ChatSettingsLayoutRouteImport } from './routes/_chat.settings.layout'
 import { Route as ChatSettingsLabsRouteImport } from './routes/_chat.settings.labs'
@@ -189,6 +190,11 @@ const ChatSettingsOpenSourceLicensesRoute =
     path: '/open-source-licenses',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsMediaRoute = ChatSettingsMediaRouteImport.update({
+  id: '/media',
+  path: '/media',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsMaintenanceRoute = ChatSettingsMaintenanceRouteImport.update({
   id: '/maintenance',
   path: '/maintenance',
@@ -326,6 +332,7 @@ export interface FileRoutesByFullPath {
   '/settings/labs': typeof ChatSettingsLabsRoute
   '/settings/layout': typeof ChatSettingsLayoutRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
+  '/settings/media': typeof ChatSettingsMediaRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
@@ -372,6 +379,7 @@ export interface FileRoutesByTo {
   '/settings/labs': typeof ChatSettingsLabsRoute
   '/settings/layout': typeof ChatSettingsLayoutRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
+  '/settings/media': typeof ChatSettingsMediaRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
@@ -421,6 +429,7 @@ export interface FileRoutesById {
   '/_chat/settings/labs': typeof ChatSettingsLabsRoute
   '/_chat/settings/layout': typeof ChatSettingsLayoutRoute
   '/_chat/settings/maintenance': typeof ChatSettingsMaintenanceRoute
+  '/_chat/settings/media': typeof ChatSettingsMediaRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/_chat/settings/projects': typeof ChatSettingsProjectsRoute
   '/_chat/settings/providers': typeof ChatSettingsProvidersRoute
@@ -470,6 +479,7 @@ export interface FileRouteTypes {
     | '/settings/labs'
     | '/settings/layout'
     | '/settings/maintenance'
+    | '/settings/media'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/providers'
@@ -516,6 +526,7 @@ export interface FileRouteTypes {
     | '/settings/labs'
     | '/settings/layout'
     | '/settings/maintenance'
+    | '/settings/media'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/providers'
@@ -564,6 +575,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/labs'
     | '/_chat/settings/layout'
     | '/_chat/settings/maintenance'
+    | '/_chat/settings/media'
     | '/_chat/settings/open-source-licenses'
     | '/_chat/settings/projects'
     | '/_chat/settings/providers'
@@ -774,6 +786,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOpenSourceLicensesRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/media': {
+      id: '/_chat/settings/media'
+      path: '/media'
+      fullPath: '/settings/media'
+      preLoaderRoute: typeof ChatSettingsMediaRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/maintenance': {
       id: '/_chat/settings/maintenance'
       path: '/maintenance'
@@ -936,6 +955,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsLabsRoute: typeof ChatSettingsLabsRoute
   ChatSettingsLayoutRoute: typeof ChatSettingsLayoutRoute
   ChatSettingsMaintenanceRoute: typeof ChatSettingsMaintenanceRoute
+  ChatSettingsMediaRoute: typeof ChatSettingsMediaRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
   ChatSettingsProjectsRoute: typeof ChatSettingsProjectsRoute
   ChatSettingsProvidersRoute: typeof ChatSettingsProvidersRoute
@@ -968,6 +988,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsLabsRoute: ChatSettingsLabsRoute,
   ChatSettingsLayoutRoute: ChatSettingsLayoutRoute,
   ChatSettingsMaintenanceRoute: ChatSettingsMaintenanceRoute,
+  ChatSettingsMediaRoute: ChatSettingsMediaRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
   ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,
   ChatSettingsProvidersRoute: ChatSettingsProvidersRoute,
