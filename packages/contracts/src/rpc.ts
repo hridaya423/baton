@@ -371,6 +371,15 @@ import {
   ServerSettingsPatch,
 } from "./settings.ts";
 import {
+  CaptainCreateInput,
+  CaptainCreateResult,
+  CaptainError,
+  CaptainListInput,
+  CaptainListResult,
+  CaptainReleaseInput,
+  CaptainReleaseResult,
+} from "./captain.ts";
+import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
   ScheduledTaskError,
@@ -550,6 +559,9 @@ export const WS_METHODS = {
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
+  captainsCreate: "captains.create",
+  captainsList: "captains.list",
+  captainsRelease: "captains.release",
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
@@ -1976,6 +1988,24 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsCaptainsCreateRpc = Rpc.make(WS_METHODS.captainsCreate, {
+  payload: CaptainCreateInput,
+  success: CaptainCreateResult,
+  error: Schema.Union([CaptainError, EnvironmentAuthorizationError]),
+});
+
+const WsCaptainsListRpc = Rpc.make(WS_METHODS.captainsList, {
+  payload: CaptainListInput,
+  success: CaptainListResult,
+  error: Schema.Union([CaptainError, EnvironmentAuthorizationError]),
+});
+
+const WsCaptainsReleaseRpc = Rpc.make(WS_METHODS.captainsRelease, {
+  payload: CaptainReleaseInput,
+  success: CaptainReleaseResult,
+  error: Schema.Union([CaptainError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2121,6 +2151,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
+  WsCaptainsCreateRpc,
+  WsCaptainsListRpc,
+  WsCaptainsReleaseRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,
