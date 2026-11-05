@@ -62,6 +62,7 @@ import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeConte
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
+import { MentionIndexSettings } from "./MentionIndexSettings";
 import { SnoozePresetsRow } from "./SnoozePresetsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { managedTelemetryOffMessage, usePrimaryManagedPolicy } from "../../state/managedPolicy";
@@ -1287,6 +1288,8 @@ export function ChatSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <MentionIndexSettings />
     </SettingsPageContainer>
   );
 }

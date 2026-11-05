@@ -146,6 +146,11 @@ import {
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import {
+  figmaContextRecord,
+  issueContextRecord,
+  jiraContextRecord,
+} from "@t3tools/shared/composerContextExternalLinks";
+import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
@@ -172,7 +177,7 @@ import {
   uploadedAttachmentContextRecord,
   previewAnnotationContextId,
   previewAnnotationContextRecord,
-  reviewCommentContextId,
+  reviewCommentDraftContextId,
   reviewCommentContextReference,
   reviewCommentContextRecord,
   terminalContextReference,
@@ -180,6 +185,9 @@ import {
   threadContextReference,
   environmentContextRecord,
   environmentContextReference,
+  jiraContextReference,
+  figmaContextReference,
+  issueContextReference,
 } from "~/lib/composerContextRecords";
 import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachments";
 import { useThreadContextDrop, threadContextDropTargetProps } from "./threadContextDrag";
@@ -329,6 +337,9 @@ export interface ChatComposerHandle {
     reviewComments: ReviewCommentContext[];
     threadContexts: ThreadContextRecord[];
     environmentContexts: EnvironmentContextRecord[];
+    jiraContexts: import("@t3tools/contracts").JiraContextRecord[];
+    figmaContexts: import("@t3tools/contracts").FigmaContextRecord[];
+    issueContexts: import("@t3tools/contracts").IssueContextRecord[];
     selectedPromptEffort: string | null;
     selectedModelSelection: ModelSelection;
     multipleModelSelections: ReadonlyArray<ModelSelection> | null;
@@ -711,6 +722,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerReviewComments = composerDraft.reviewComments;
   const composerThreadContexts = attachmentDraft.threadContexts;
   const composerEnvironmentContexts = composerDraft.environmentContexts;
+  const composerJiraContexts = composerDraft.jiraContexts;
+  const composerFigmaContexts = composerDraft.figmaContexts;
+  const composerIssueContexts = composerDraft.issueContexts;
   const {
     pendingSnapShotAnimations,
     pendingSnapShotIds,
@@ -762,6 +776,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     previewAnnotations: composerPreviewAnnotations,
     threadContexts: composerThreadContexts,
     environmentContexts: composerEnvironmentContexts,
+    jiraContexts: composerJiraContexts,
+    figmaContexts: composerFigmaContexts,
+    issueContexts: composerIssueContexts,
     images: composerImages,
     files: composerFiles,
     uploadsByImageId,
@@ -1006,6 +1023,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const value = isLiteralPendingAnswer ? (activePendingProgress?.customAnswer ?? prompt) : prompt;
     return collapseExpandedComposerCursor(value, value.length, isLiteralPendingAnswer);
   });
+  const mentionIndexEnabled = settings.mentionIndexEnabled;
+  const detectTrigger = (text: string, cursor: number) =>
+    detectComposerTrigger(text, cursor, { mentionIndexEnabled });
   const {
     trigger: composerTrigger,
     setTrigger: setComposerTrigger,
@@ -1013,7 +1033,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dismissTrigger: dismissComposerTrigger,
     resetTrigger: resetComposerTrigger,
   } = useComposerTriggerState(() =>
-    isLiteralPendingAnswer ? null : detectComposerTrigger(prompt, prompt.length),
+    isLiteralPendingAnswer ? null : detectTrigger(prompt, prompt.length),
   );
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const composerSuggestionId = useId();
@@ -1158,6 +1178,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showSkillsInSlashMenu: settings.showSkillsInSlashMenu,
     workspaceSkillsScanning,
     questionAttachmentTarget,
+    mentionIndexEnabled,
   });
 
   const composerMenuOpen = Boolean(composerTrigger);
@@ -1216,7 +1237,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
     const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
     setComposerCursor(nextCursor);
-    setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+    setComposerTrigger(detectTrigger(nextPrompt, nextPrompt.length));
     scheduleComposerFocus();
   };
   const editPromptFromTraitsStable = useStableCallback(editPromptFromTraits);
@@ -1312,6 +1333,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const setComposerDraftEnvironmentContexts = useComposerDraftStore(
     (store) => store.setEnvironmentContexts,
   );
+  const addComposerDraftJiraContexts = useComposerDraftStore((store) => store.addJiraContexts);
+  const addComposerDraftFigmaContexts = useComposerDraftStore((store) => store.addFigmaContexts);
+  const setComposerDraftJiraContexts = useComposerDraftStore((store) => store.setJiraContexts);
+  const setComposerDraftFigmaContexts = useComposerDraftStore((store) => store.setFigmaContexts);
+  const addComposerDraftIssueContexts = useComposerDraftStore((store) => store.addIssueContexts);
+  const setComposerDraftIssueContexts = useComposerDraftStore((store) => store.setIssueContexts);
   const buildContextClipboardFragment = (contextIds: ReadonlyArray<string>): string | null => {
     const wanted = new Set(contextIds);
     const copiedFiles = new Map<string, File>();
@@ -1329,8 +1356,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         .map(terminalContextRecord),
       ...composerThreadContexts.filter((record) => wanted.has(record.contextId)),
       ...composerEnvironmentContexts.filter((record) => wanted.has(record.contextId)),
+      ...composerJiraContexts.filter((record) => wanted.has(record.contextId)),
+      ...composerFigmaContexts.filter((record) => wanted.has(record.contextId)),
+      ...composerIssueContexts.filter((record) => wanted.has(record.contextId)),
       ...composerReviewComments
-        .filter((c) => wanted.has(reviewCommentContextId(c.id)))
+        .filter((c) => wanted.has(reviewCommentDraftContextId(c)))
         .map(reviewCommentContextRecord),
       ...composerPreviewAnnotations
         .filter((a) => wanted.has(previewAnnotationContextId(a.id)))
@@ -1465,7 +1495,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (typeof nextCustomAnswer !== "string") {
       if (lastSyncedPendingInputRef.current !== null) {
         promptRef.current = prompt;
-        const { cursor, trigger } = composerStateAtPromptEnd(prompt);
+        const { cursor, trigger } = composerStateAtPromptEnd(prompt, false, {
+          mentionIndexEnabled,
+        });
         setComposerCursor(cursor);
         resetComposerTrigger(trigger);
       }
@@ -1490,7 +1522,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
 
     promptRef.current = nextCustomAnswer;
-    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer, isLiteralPendingAnswer);
+    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer, isLiteralPendingAnswer, {
+      mentionIndexEnabled,
+    });
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
     setComposerHighlightedItemId(null);
@@ -1499,6 +1533,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.id,
     isLiteralPendingAnswer,
     activePendingUserInput?.requestId,
+    mentionIndexEnabled,
     prompt,
     promptRef,
     resetComposerTrigger,
@@ -1516,6 +1551,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { cursor, trigger } = composerStateAtPromptEnd(
       typeof pendingAnswer === "string" ? pendingAnswer : prompt,
       isLiteralPendingAnswer,
+      { mentionIndexEnabled },
     );
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
@@ -1601,7 +1637,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention ? null : detectTrigger(nextPrompt, expandedCursor),
       );
       onChangeActivePendingUserInputCustomAnswer(
         activePendingProgress.activeQuestion.id,
@@ -1682,15 +1718,66 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftEnvironmentContexts(composerDraftTarget, nextEnvironments);
     }
 
+    const liveJiraIds = new Set<string>(composerJiraContexts.map((record) => record.contextId));
+    const restoredJira = [...referenced].flatMap((contextId) => {
+      if (liveJiraIds.has(contextId)) return [];
+      const record = retained.jira.get(contextId);
+      return record ? [record] : [];
+    });
+    const nextJira = [
+      ...composerJiraContexts.filter((record) => referenced.has(record.contextId)),
+      ...restoredJira,
+    ];
+    for (const record of composerJiraContexts) {
+      if (!referenced.has(record.contextId)) retained.jira.set(record.contextId, record);
+    }
+    if (nextJira.length !== composerJiraContexts.length || restoredJira.length > 0) {
+      setComposerDraftJiraContexts(composerDraftTarget, nextJira);
+    }
+
+    const liveFigmaIds = new Set<string>(composerFigmaContexts.map((record) => record.contextId));
+    const restoredFigma = [...referenced].flatMap((contextId) => {
+      if (liveFigmaIds.has(contextId)) return [];
+      const record = retained.figma.get(contextId);
+      return record ? [record] : [];
+    });
+    const nextFigma = [
+      ...composerFigmaContexts.filter((record) => referenced.has(record.contextId)),
+      ...restoredFigma,
+    ];
+    for (const record of composerFigmaContexts) {
+      if (!referenced.has(record.contextId)) retained.figma.set(record.contextId, record);
+    }
+    if (nextFigma.length !== composerFigmaContexts.length || restoredFigma.length > 0) {
+      setComposerDraftFigmaContexts(composerDraftTarget, nextFigma);
+    }
+
+    const liveIssueIds = new Set<string>(composerIssueContexts.map((record) => record.contextId));
+    const restoredIssues = [...referenced].flatMap((contextId) => {
+      if (liveIssueIds.has(contextId)) return [];
+      const record = retained.issues.get(contextId);
+      return record ? [record] : [];
+    });
+    const nextIssues = [
+      ...composerIssueContexts.filter((record) => referenced.has(record.contextId)),
+      ...restoredIssues,
+    ];
+    for (const record of composerIssueContexts) {
+      if (!referenced.has(record.contextId)) retained.issues.set(record.contextId, record);
+    }
+    if (nextIssues.length !== composerIssueContexts.length || restoredIssues.length > 0) {
+      setComposerDraftIssueContexts(composerDraftTarget, nextIssues);
+    }
+
     for (const comment of composerReviewComments) {
-      const contextId = reviewCommentContextId(comment.id);
+      const contextId = reviewCommentDraftContextId(comment);
       if (!referenced.has(contextId)) {
         retained.reviewComments.set(contextId, comment);
         removeComposerDraftReviewComment(composerDraftTarget, comment.id);
       }
     }
     const liveReviewIds = new Set<string>(
-      composerReviewComments.map((comment) => reviewCommentContextId(comment.id)),
+      composerReviewComments.map((comment) => reviewCommentDraftContextId(comment)),
     );
     for (const contextId of referenced) {
       if (liveReviewIds.has(contextId)) continue;
@@ -1723,9 +1810,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftFiles(attachmentDraftTarget, attachmentChanges.filesToRestore);
     }
     setComposerCursor(nextCursor);
-    setComposerTrigger(
-      cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-    );
+    setComposerTrigger(cursorAdjacentToMention ? null : detectTrigger(nextPrompt, expandedCursor));
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
 
@@ -1795,7 +1880,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      isLiteralPendingAnswer ? null : detectComposerTrigger(next.text, nextExpandedCursor),
+      isLiteralPendingAnswer ? null : detectTrigger(next.text, nextExpandedCursor),
     );
     if (options?.focusEditorAfterReplace !== false) {
       window.requestAnimationFrame(() => {
@@ -1839,7 +1924,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       snapshot,
       trigger: isLiteralPendingAnswer
         ? null
-        : resolveComposerTrigger(detectComposerTrigger(snapshot.value, snapshot.expandedCursor)),
+        : resolveComposerTrigger(detectTrigger(snapshot.value, snapshot.expandedCursor)),
     };
   };
 
@@ -1853,6 +1938,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { snapshot, trigger } = resolveActiveComposerTrigger();
     if (!trigger) return;
     if (item.type === "path") {
+      if (trigger.kind !== "path" && trigger.kind !== "file") return;
       if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
       const replacement = `${serializeComposerFileLink(item.path)} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -1944,7 +2030,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (item.type === "pull-request") {
       if (
-        trigger.kind !== "pull-request" ||
+        questionAttachmentTarget !== null ||
+        (trigger.kind !== "pull-request" && trigger.kind !== "hash") ||
         !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
       ) {
         return;
@@ -1970,10 +2057,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "thread") {
-      if (trigger.kind !== "path") return;
+      if (trigger.kind !== "path" && trigger.kind !== "thread") return;
       const shell = readThreadShell(item.thread);
-      if (!shell) return;
-      const record = threadContextRecord(item.thread, shell.title);
+      const record = threadContextRecord(item.thread, shell?.title ?? item.label);
       const replacement = `${formatInlineContextReference(threadContextReference(record))} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
@@ -2005,6 +2091,98 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (applied) {
         addComposerDraftEnvironmentContexts(composerDraftTarget, [record], {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "jira") {
+      if (
+        questionAttachmentTarget !== null ||
+        trigger.kind !== "jira" ||
+        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = jiraContextRecord({
+        key: item.key,
+        url: item.url,
+        summary: item.summary,
+      });
+      const replacement = `${formatInlineContextReference(jiraContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftJiraContexts(composerDraftTarget, [record], {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "figma") {
+      if (
+        questionAttachmentTarget !== null ||
+        trigger.kind !== "figma" ||
+        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = figmaContextRecord({
+        fileKey: item.fileKey,
+        url: item.url,
+        name: item.name,
+      });
+      const replacement = `${formatInlineContextReference(figmaContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftFigmaContexts(composerDraftTarget, [record], {
+          appendReference: false,
+        });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "issue") {
+      if (
+        questionAttachmentTarget !== null ||
+        (trigger.kind !== "issue" && trigger.kind !== "hash") ||
+        !composerMenuItemsRef.current.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = issueContextRecord({
+        number: item.number,
+        title: item.title,
+        url: item.url,
+        repository: item.repository,
+        state: item.state,
+      });
+      const replacement = `${formatInlineContextReference(issueContextReference(record))} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        addComposerDraftIssueContexts(composerDraftTarget, [record], {
           appendReference: false,
         });
         setComposerHighlightedItemId(null);
@@ -2416,7 +2594,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return false;
     }
     if (options?.clipboardData) {
-      text = importPastedComposerText(options.clipboardData, importContextFragment);
+      text = importPastedComposerText(options.clipboardData, importContextFragment, {
+        rewriteExternalLinks: mentionIndexEnabled,
+      });
     }
     const prompt = promptRef.current;
     const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
@@ -2499,9 +2679,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
 
   const onComposerCommandKeyStable = useStableCallback(onComposerCommandKey);
-  const isPathQueryActiveStable = useStableCallback(
-    () => resolveActiveComposerTrigger().trigger?.kind === "path",
-  );
+  const isPathQueryActiveStable = useStableCallback(() => {
+    const kind = resolveActiveComposerTrigger().trigger?.kind;
+    return kind === "path" || kind === "file";
+  });
 
   const insertComposerTextAtEnd: ChatComposerHandle["insertTextAtEnd"] = (text, options) => {
     const inserted = insertComposerText(text, "end", options);
@@ -2573,7 +2754,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
 
-    if ((readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0) return;
+    if (
+      (readPastedComposerContext(event.clipboardData, {
+        rewriteExternalLinks: mentionIndexEnabled,
+      })?.records.length ?? 0) > 0
+    )
+      return;
     if (!foldPastedText(plainText, bypassAutoAttachment)) {
       return;
     }
@@ -2945,10 +3131,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setComposerCursor(cursor);
         resetComposerTrigger(
           options?.detectTrigger && !isLiteralPendingAnswer
-            ? detectComposerTrigger(
-                promptForState,
-                expandCollapsedComposerCursor(promptForState, cursor),
-              )
+            ? detectTrigger(promptForState, expandCollapsedComposerCursor(promptForState, cursor))
             : null,
         );
       },
@@ -2979,7 +3162,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (!inserted) return;
         promptRef.current = insertion.prompt;
         setComposerCursor(nextCollapsedCursor);
-        setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
+        setComposerTrigger(detectTrigger(insertion.prompt, insertion.cursor));
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAt(nextCollapsedCursor);
         });
@@ -2997,6 +3180,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         reviewComments: composerReviewComments,
         threadContexts: composerThreadContexts,
         environmentContexts: composerEnvironmentContexts,
+        jiraContexts: composerJiraContexts,
+        figmaContexts: composerFigmaContexts,
+        issueContexts: composerIssueContexts,
         selectedPromptEffort,
         selectedModelSelection,
         multipleModelSelections:
@@ -3053,6 +3239,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerReviewComments,
       composerThreadContexts,
       composerEnvironmentContexts,
+      composerJiraContexts,
+      composerFigmaContexts,
+      composerIssueContexts,
       focusComposer,
       environmentId,
       primaryEnvironmentId,
@@ -3334,9 +3523,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ? isComposerMenuLoading
                     ? composerTriggerKind === "pull-request"
                       ? "Finding pull request..."
-                      : composerTriggerKind === "skill" || composerTriggerKind === "slash-command"
-                        ? "Searching workspace skills..."
-                        : "Searching workspace files..."
+                      : composerTriggerKind === "hash"
+                        ? "Finding pull requests and issues..."
+                        : composerTriggerKind === "jira"
+                          ? "Finding Jira issues..."
+                          : composerTriggerKind === "issue"
+                            ? "Finding GitHub issues..."
+                            : composerTriggerKind === "figma"
+                              ? "Finding Figma designs..."
+                              : composerTriggerKind === "thread"
+                                ? "Finding threads..."
+                                : composerTriggerKind === "skill" ||
+                                    composerTriggerKind === "slash-command"
+                                  ? "Searching workspace skills..."
+                                  : "Searching workspace files..."
                     : composerMenuEmptyState
                   : ""}
               </div>
@@ -3402,6 +3602,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     contextRecords={composerContextRecords}
                     buildContextClipboardFragment={buildContextClipboardFragmentStable}
                     importContextFragment={importContextFragmentStable}
+                    rewriteExternalLinks={mentionIndexEnabled}
                     skills={selectedProviderSkills}
                     className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
