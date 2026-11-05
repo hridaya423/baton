@@ -380,8 +380,18 @@ import {
   CaptainEscalationsResolveResult,
   CaptainListInput,
   CaptainListResult,
+  CaptainOrdersDropInput,
+  CaptainOrdersDropResult,
+  CaptainOrdersLandInput,
+  CaptainOrdersLandResult,
+  CaptainOrdersListInput,
+  CaptainOrdersListResult,
+  CaptainOrdersRetryInput,
+  CaptainOrdersRetryResult,
   CaptainReleaseInput,
   CaptainReleaseResult,
+  CaptainUpdateInput,
+  CaptainUpdateResult,
 } from "./captain.ts";
 import {
   ScheduledTaskDeleteInput,
@@ -568,6 +578,11 @@ export const WS_METHODS = {
   captainsRelease: "captains.release",
   captainsEscalationsList: "captains.escalations.list",
   captainsEscalationsResolve: "captains.escalations.resolve",
+  captainsOrdersList: "captains.orders.list",
+  captainsOrdersLand: "captains.orders.land",
+  captainsOrdersRetry: "captains.orders.retry",
+  captainsOrdersDrop: "captains.orders.drop",
+  captainsUpdate: "captains.update",
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
@@ -2024,6 +2039,38 @@ const WsCaptainsEscalationsResolveRpc = Rpc.make(WS_METHODS.captainsEscalationsR
   error: Schema.Union([CaptainError, EnvironmentAuthorizationError]),
 });
 
+const captainRpcError = Schema.Union([CaptainError, EnvironmentAuthorizationError]);
+
+const WsCaptainsOrdersListRpc = Rpc.make(WS_METHODS.captainsOrdersList, {
+  payload: CaptainOrdersListInput,
+  success: CaptainOrdersListResult,
+  error: captainRpcError,
+});
+
+const WsCaptainsOrdersLandRpc = Rpc.make(WS_METHODS.captainsOrdersLand, {
+  payload: CaptainOrdersLandInput,
+  success: CaptainOrdersLandResult,
+  error: captainRpcError,
+});
+
+const WsCaptainsOrdersRetryRpc = Rpc.make(WS_METHODS.captainsOrdersRetry, {
+  payload: CaptainOrdersRetryInput,
+  success: CaptainOrdersRetryResult,
+  error: captainRpcError,
+});
+
+const WsCaptainsOrdersDropRpc = Rpc.make(WS_METHODS.captainsOrdersDrop, {
+  payload: CaptainOrdersDropInput,
+  success: CaptainOrdersDropResult,
+  error: captainRpcError,
+});
+
+const WsCaptainsUpdateRpc = Rpc.make(WS_METHODS.captainsUpdate, {
+  payload: CaptainUpdateInput,
+  success: CaptainUpdateResult,
+  error: captainRpcError,
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2174,6 +2221,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsCaptainsReleaseRpc,
   WsCaptainsEscalationsListRpc,
   WsCaptainsEscalationsResolveRpc,
+  WsCaptainsOrdersListRpc,
+  WsCaptainsOrdersLandRpc,
+  WsCaptainsOrdersRetryRpc,
+  WsCaptainsOrdersDropRpc,
+  WsCaptainsUpdateRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

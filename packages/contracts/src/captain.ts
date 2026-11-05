@@ -34,24 +34,49 @@ export const CaptainOrderState = Schema.Literals([
   "verify_failed",
   "reviewing",
   "accepted",
+  "landing",
+  "landed",
+  "land_failed",
   "done",
   "dropped",
 ]);
 export type CaptainOrderState = typeof CaptainOrderState.Type;
 
+const CrewCap = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(6));
+const RetryLimit = NonNegativeInt.check(Schema.isLessThanOrEqualTo(10));
+const StallMinutes = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isLessThanOrEqualTo(1_440),
+);
+const VerifyTimeoutMinutes = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(1),
+  Schema.isLessThanOrEqualTo(120),
+);
+
 export const CaptainCharter = Schema.Struct({
-  crewCap: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  crewCap: CrewCap,
   defaultDelivery: CaptainOrderDelivery,
   crewRuntimeMode: RuntimeMode,
-  retryLimit: NonNegativeInt,
-  stallMinutes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
-  verifyTimeoutMinutes: Schema.optional(
-    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(120)),
-  ),
+  retryLimit: RetryLimit,
+  stallMinutes: StallMinutes,
+  verifyTimeoutMinutes: Schema.optional(VerifyTimeoutMinutes),
   defaultModel: Schema.optional(ModelSelection),
   reviewModel: Schema.optional(ModelSelection),
 });
 export type CaptainCharter = typeof CaptainCharter.Type;
+
+/** `null` clears an optional field. */
+export const CaptainCharterPatch = Schema.Struct({
+  crewCap: Schema.optional(CrewCap),
+  defaultDelivery: Schema.optional(CaptainOrderDelivery),
+  crewRuntimeMode: Schema.optional(RuntimeMode),
+  retryLimit: Schema.optional(RetryLimit),
+  stallMinutes: Schema.optional(StallMinutes),
+  verifyTimeoutMinutes: Schema.optional(Schema.NullOr(VerifyTimeoutMinutes)),
+  defaultModel: Schema.optional(Schema.NullOr(ModelSelection)),
+  reviewModel: Schema.optional(Schema.NullOr(ModelSelection)),
+});
+export type CaptainCharterPatch = typeof CaptainCharterPatch.Type;
 
 export const DEFAULT_CAPTAIN_CHARTER: CaptainCharter = {
   crewCap: 3,
@@ -88,6 +113,18 @@ export const CaptainVerifyResult = Schema.Struct({
   finishedAt: IsoDateTime,
 });
 export type CaptainVerifyResult = typeof CaptainVerifyResult.Type;
+
+export const CaptainLandAction = Schema.Literals(["branch", "pr", "merge"]);
+export type CaptainLandAction = typeof CaptainLandAction.Type;
+
+export const CaptainLandResult = Schema.Struct({
+  action: CaptainLandAction,
+  ok: Schema.Boolean,
+  error: Schema.optional(Schema.String),
+  prUrl: Schema.optional(Schema.String),
+  at: IsoDateTime,
+});
+export type CaptainLandResult = typeof CaptainLandResult.Type;
 
 export const CaptainReviewVerdict = Schema.Literals(["approve", "reject"]);
 export type CaptainReviewVerdict = typeof CaptainReviewVerdict.Type;
@@ -149,6 +186,8 @@ export const CaptainOrder = Schema.Struct({
   lastReport: Schema.NullOr(CaptainCrewReport),
   verify: Schema.NullOr(CaptainVerifyResult),
   review: Schema.NullOr(CaptainReview),
+  land: Schema.NullOr(CaptainLandResult),
+  prUrl: Schema.NullOr(Schema.String),
   pendingFollowUp: Schema.NullOr(Schema.String),
   stallLevel: NonNegativeInt,
   createdAt: IsoDateTime,
@@ -202,6 +241,7 @@ export class CaptainError extends Schema.TaggedError<CaptainError>()("CaptainErr
     "not_a_captain",
     "not_crew",
     "invalid_order",
+    "invalid_charter",
     "crew_not_running",
     "not_reviewer",
     "escalation_not_found",
@@ -238,6 +278,8 @@ export class CaptainError extends Schema.TaggedError<CaptainError>()("CaptainErr
         return `Only a crew thread can use this tool.${detail}`;
       case "invalid_order":
         return `The order is not valid.${detail}`;
+      case "invalid_charter":
+        return `The charter is not valid.${detail}`;
       case "crew_not_running":
         return `The order has no running crew thread.${detail}`;
       case "not_reviewer":
@@ -320,6 +362,7 @@ export const CaptainMcpOrderSummary = Schema.Struct({
   lastReport: Schema.NullOr(CaptainCrewReport),
   verify: Schema.NullOr(CaptainVerifyResult),
   review: Schema.NullOr(CaptainReview),
+  land: Schema.NullOr(CaptainLandResult),
   threadId: Schema.NullOr(ThreadId),
   link: Schema.optional(Schema.String),
 });
@@ -334,6 +377,9 @@ export const CaptainMcpOrderListResult = Schema.Struct({
     verify_failed: NonNegativeInt,
     reviewing: NonNegativeInt,
     accepted: NonNegativeInt,
+    landing: NonNegativeInt,
+    landed: NonNegativeInt,
+    land_failed: NonNegativeInt,
     done: NonNegativeInt,
     dropped: NonNegativeInt,
   }),
@@ -425,6 +471,25 @@ export const CaptainMcpOrderRetryResult = Schema.Struct({
 });
 export type CaptainMcpOrderRetryResult = typeof CaptainMcpOrderRetryResult.Type;
 
+export const CaptainMcpOrderLandInput = Schema.Struct({
+  orderId: CaptainOrderId,
+  delivery: Schema.optional(
+    CaptainOrderDelivery.annotate({
+      description:
+        "Overrides the order's delivery: none keeps the branch local, branch pushes it, pr opens a pull request, merge asks the user to approve a merge into the base branch.",
+    }),
+  ),
+});
+export type CaptainMcpOrderLandInput = typeof CaptainMcpOrderLandInput.Type;
+
+export const CaptainMcpOrderLandResult = Schema.Struct({
+  orderId: CaptainOrderId,
+  state: CaptainOrderState,
+  delivery: CaptainOrderDelivery,
+  needsApproval: Schema.Boolean,
+});
+export type CaptainMcpOrderLandResult = typeof CaptainMcpOrderLandResult.Type;
+
 export const CaptainMcpEscalateInput = Schema.Struct({
   orderId: Schema.optional(CaptainOrderId),
   kind: CaptainEscalationKind,
@@ -473,3 +538,46 @@ export type CaptainEscalationsResolveInput = typeof CaptainEscalationsResolveInp
 
 export const CaptainEscalationsResolveResult = Schema.Struct({ escalation: CaptainEscalation });
 export type CaptainEscalationsResolveResult = typeof CaptainEscalationsResolveResult.Type;
+
+export const CaptainOrdersListInput = Schema.Struct({ captainId: CaptainId });
+export type CaptainOrdersListInput = typeof CaptainOrdersListInput.Type;
+
+export const CaptainOrdersListResult = Schema.Struct({ orders: Schema.Array(CaptainOrder) });
+export type CaptainOrdersListResult = typeof CaptainOrdersListResult.Type;
+
+export const CaptainOrdersLandInput = Schema.Struct({
+  orderId: CaptainOrderId,
+  delivery: Schema.optional(CaptainOrderDelivery),
+});
+export type CaptainOrdersLandInput = typeof CaptainOrdersLandInput.Type;
+
+export const CaptainOrdersLandResult = Schema.Struct({ order: CaptainOrder });
+export type CaptainOrdersLandResult = typeof CaptainOrdersLandResult.Type;
+
+export const CaptainOrdersRetryInput = Schema.Struct({
+  orderId: CaptainOrderId,
+  brief: Schema.optional(OrderText),
+});
+export type CaptainOrdersRetryInput = typeof CaptainOrdersRetryInput.Type;
+
+export const CaptainOrdersRetryResult = Schema.Struct({ order: CaptainOrder });
+export type CaptainOrdersRetryResult = typeof CaptainOrdersRetryResult.Type;
+
+export const CaptainOrdersDropInput = Schema.Struct({
+  orderId: CaptainOrderId,
+  reason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_000))),
+});
+export type CaptainOrdersDropInput = typeof CaptainOrdersDropInput.Type;
+
+export const CaptainOrdersDropResult = Schema.Struct({ order: CaptainOrder });
+export type CaptainOrdersDropResult = typeof CaptainOrdersDropResult.Type;
+
+export const CaptainUpdateInput = Schema.Struct({
+  captainId: CaptainId,
+  status: Schema.optional(Schema.Literals(["active", "paused"])),
+  charter: Schema.optional(CaptainCharterPatch),
+});
+export type CaptainUpdateInput = typeof CaptainUpdateInput.Type;
+
+export const CaptainUpdateResult = Schema.Struct({ captain: Captain });
+export type CaptainUpdateResult = typeof CaptainUpdateResult.Type;
