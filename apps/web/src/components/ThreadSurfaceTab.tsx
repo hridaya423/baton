@@ -106,6 +106,7 @@ import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
 } from "./pullRequest/pullRequestDetail.logic";
+import { CrewBoardPanel } from "./captain/CrewBoardPanel";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { RightPanelTabs } from "./RightPanelTabs";
 import {
@@ -796,6 +797,8 @@ function ThreadSurfaceContent({
       );
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "crew-board":
+      return <CrewBoardPanel threadRef={threadRef} />;
     case "device":
       return (
         <Suspense fallback={null}>

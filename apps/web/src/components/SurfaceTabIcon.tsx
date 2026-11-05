@@ -18,7 +18,15 @@ import type {
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { surfaceTabTitle } from "../layout/surfaceTabLabels";
-import { FileDiff, Files, Globe2, MessagesSquare, Smartphone, TerminalSquare } from "lucide-react";
+import {
+  Anchor,
+  FileDiff,
+  Files,
+  Globe2,
+  MessagesSquare,
+  Smartphone,
+  TerminalSquare,
+} from "lucide-react";
 
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
@@ -147,6 +155,10 @@ export function SurfaceIcon({
     case "pull-requests":
       return (
         <PullRequestGlyph.link className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
+      );
+    case "crew-board":
+      return (
+        <Anchor className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
       );
     case "side-chat":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;

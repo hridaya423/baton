@@ -45,6 +45,9 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
+import { captainMenuState } from "../components/captain/captainThreads.logic";
+import { readCaptainSidebarIndex } from "../state/captains";
+import { useCaptainActions } from "./useCaptainActions";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { updateClientSettings, useClientSettings } from "./useSettings";
@@ -105,6 +108,7 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
+  const runCaptainAction = useCaptainActions();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -164,6 +168,7 @@ export function useThreadActionMenu(input: {
         snoozePresets,
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+        captain: captainMenuState(thread, readCaptainSidebarIndex(threadRef.environmentId)),
       });
       const leading = leadingItems?.() ?? [];
       const leadingIds = new Set(leading.map((item) => item.id));
@@ -225,6 +230,13 @@ export function useThreadActionMenu(input: {
         }
       };
       switch (action) {
+        case "make-captain":
+        case "release-captain":
+        case "pause-captain":
+        case "resume-captain":
+        case "open-crew-board":
+          await runCaptainAction(action, threadRef);
+          return;
         case "find":
           onFind?.(threadRef);
           return;

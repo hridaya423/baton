@@ -1,4 +1,6 @@
 import { formatModelSlugName } from "@t3tools/shared/model";
+import { CaptainCrewRail } from "../captain/CaptainCrewRail";
+import { CaptainRowGlyph, CaptainRowNeedsYou } from "../captain/CaptainRowMarks";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -1312,7 +1314,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 </span>
               )}
               {draftIndicator}
+              <CaptainRowGlyph environmentId={thread.environmentId} threadId={thread.id} />
               {title}
+              <CaptainRowNeedsYou environmentId={thread.environmentId} threadId={thread.id} />
               {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
@@ -1437,6 +1441,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
+        <CaptainCrewRail environmentId={thread.environmentId} threadId={thread.id} />
       </li>
     );
   }
@@ -1618,7 +1623,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <CaptainRowGlyph environmentId={thread.environmentId} threadId={thread.id} />
               {title}
+              <CaptainRowNeedsYou environmentId={thread.environmentId} threadId={thread.id} />
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
@@ -1631,6 +1638,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      <CaptainCrewRail environmentId={thread.environmentId} threadId={thread.id} />
     </li>
   );
 });

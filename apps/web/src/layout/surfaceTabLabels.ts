@@ -30,6 +30,8 @@ export function surfaceTabTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "crew-board":
+      return "Crew";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":

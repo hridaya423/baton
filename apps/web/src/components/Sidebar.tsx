@@ -121,6 +121,8 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { captainHiddenKeysFor, captainMenuState } from "./captain/captainThreads.logic";
+import { readCaptainSidebarIndex, useCaptainSidebarIndexes } from "../state/captains";
 import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
@@ -131,6 +133,7 @@ import {
   useAcknowledgeThreadWoke,
   useThreadActions,
 } from "../hooks/useThreadActions";
+import { useCaptainActions } from "../hooks/useCaptainActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
@@ -355,6 +358,8 @@ interface SidebarThreadPartitionInput {
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
   readonly delegatedUnderParent: ReadonlySet<string>;
+  /** Reviewer threads, and crew threads nested under a captain row. */
+  readonly captainHiddenThreadKeys: ReadonlySet<string>;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
@@ -484,10 +489,13 @@ function useSidebarThreads(input: {
   const settledVisibleCount =
     settledTail.scopeKey === projectScopeKey ? settledTail.count : SETTLED_TAIL_INITIAL_COUNT;
 
+  const captainIndexes = useCaptainSidebarIndexes();
+  const captainHiddenThreadKeys = captainHiddenKeysFor(captainIndexes, threads);
   const partition = partitionSidebarThreads({
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
+    captainHiddenThreadKeys,
     serverConfigs,
     connectedEnvironmentIds,
     optimisticDrop,
@@ -625,13 +633,19 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
+    captainHiddenThreadKeys,
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const visible = filterSidebarV2VisibleThreads(
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+    captainHiddenThreadKeys,
+  );
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -1006,6 +1020,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     archiveThread,
     deleteThread,
   } = useThreadActions();
+  const runCaptainAction = useCaptainActions();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -2788,6 +2803,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   canShareWithGuestAtom(threadRef.environmentId),
                 ),
                 canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+                captain: captainMenuState(thread, readCaptainSidebarIndex(thread.environmentId)),
                 supports: {
                   settlement: configLoaded,
                   autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2826,6 +2842,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "make-captain":
+          case "release-captain":
+          case "pause-captain":
+          case "resume-captain":
+          case "open-crew-board":
+            await runCaptainAction(clicked.value, threadRef);
+            return;
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKeys(

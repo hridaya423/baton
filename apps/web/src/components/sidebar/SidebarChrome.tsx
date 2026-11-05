@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, InboxIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -6,7 +6,10 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { observeResize } from "../../lib/observeResize";
+import { useCaptainBoards } from "../../state/captains";
 import { usePullRequestsSupported } from "../../state/environments";
+import { openNeedsYou } from "../captain/needsYouStore";
+import { countOpenCaptainEscalations } from "../captain/captainThreads.logic";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -141,6 +144,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const captainInbox = countOpenCaptainEscalations(useCaptainBoards());
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -190,6 +194,27 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
                 icon={<PullRequestGlyph.pullRequest className="size-4" />}
                 label="Pull Requests"
                 onClick={handlePullRequestsClick}
+              />
+            ) : null}
+            {captainInbox.captains > 0 ? (
+              <SidebarUtilityItem
+                icon={
+                  <>
+                    <InboxIcon className="size-4" />
+                    {captainInbox.open > 0 ? (
+                      <span className="pointer-events-none absolute -top-1 -right-1">
+                        <Badge size="sm" variant="warning">
+                          {captainInbox.open}
+                        </Badge>
+                      </span>
+                    ) : null}
+                  </>
+                }
+                label={captainInbox.open > 0 ? `Needs you (${captainInbox.open})` : "Needs you"}
+                onClick={() => {
+                  closeMobileSidebar();
+                  openNeedsYou();
+                }}
               />
             ) : null}
             <SidebarUtilityItem

@@ -227,6 +227,14 @@
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
     },
+    "./state/captains": {
+      "types": "./src/state/captains.ts",
+      "default": "./src/state/captains.ts"
+    },
+    "./state/captainBoard": {
+      "types": "./src/state/captainBoard.ts",
+      "default": "./src/state/captainBoard.ts"
+    },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"

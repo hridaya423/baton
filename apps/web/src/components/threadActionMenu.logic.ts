@@ -3,6 +3,12 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 import { TRANSCRIPT_VIEW_LABELS } from "@t3tools/client-runtime/work-log/disclosure";
 import * as Schema from "effect/Schema";
 
+import {
+  captainMenuItems,
+  type CaptainMenuActionId,
+  type CaptainMenuState,
+} from "./captain/captainThreads.logic";
+
 export type ThreadActionMenuId =
   | "find"
   | "new-thread-on-branch"
@@ -25,6 +31,7 @@ export type ThreadActionMenuId =
   | "regenerate-title"
   | "mark-unread"
   | "share-guest"
+  | CaptainMenuActionId
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -101,6 +108,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** What the menu offers about this thread's captain role; omitted where captains do not apply. */
+  readonly captain?: CaptainMenuState;
 }
 
 /** Local navigation, read markers, copying, and display choices remain available to read-only clients. */
@@ -113,6 +122,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
       "project-settings",
       "mark-unread",
       "share-guest",
+      "open-crew-board",
       "copy",
       "copy-path",
       "copy-branch",
@@ -199,6 +209,7 @@ export function buildThreadActionMenuItems(
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),
+    ...captainMenuItems(state.captain ?? { kind: "none" }),
     ...(state.projectFilter
       ? [
           {

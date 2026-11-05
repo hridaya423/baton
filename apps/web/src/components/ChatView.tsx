@@ -326,6 +326,7 @@ import {
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
+import { useCrewBoardAutoOpen } from "./captain/useCrewBoardAutoOpen";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
@@ -2067,6 +2068,10 @@ export default function ChatView(props: ChatViewProps) {
     pullRequestsSurfaceAvailable,
     visiblePullRequestCount,
     onDiffPanelOpen,
+  });
+  useCrewBoardAutoOpen({
+    threadRef: isServerThread && !embedded ? activeThreadRef : null,
+    enabled: settings.proactivePanelsEnabled && !shouldUsePlanSidebarSheet && !embedded,
   });
   const persistThreadSettingsForNextTurn = async (input: {
     threadId: ThreadId;

@@ -25,6 +25,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "side-chat",
+  "crew-board",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -85,6 +86,7 @@ export type RightPanelSurface =
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
+  | { id: "crew-board"; kind: "crew-board" }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
@@ -104,6 +106,7 @@ export interface ThreadRightPanelState {
   dismissedDeviceSurfaceIds?: string[];
   maximized?: true;
   proactiveDiffTurnId?: RunId;
+  crewBoardOffered?: true;
 }
 
 export interface ThreadPanelVisibility {
@@ -135,6 +138,8 @@ interface RightPanelStoreState {
     expectedUserActionRevision: number,
     activateExisting?: boolean,
   ) => boolean;
+  /** Opens the crew board the first time a captain thread is seen; a later close stays closed. */
+  offerCrewBoard: (ref: ScopedThreadRef) => void;
   open: (
     ref: ScopedThreadRef,
     kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
@@ -256,6 +261,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
+    case "crew-board":
+      return { id: "crew-board", kind };
     case "device":
       return { id: "device", kind };
   }
@@ -365,7 +372,8 @@ const updateThreadStateMap = (
     next.activeSurfaceId === null &&
     next.surfaces.length === 0 &&
     !next.dismissedDeviceSurfaceIds?.length &&
-    next.proactiveDiffTurnId === undefined
+    next.proactiveDiffTurnId === undefined &&
+    next.crewBoardOffered === undefined
   ) {
     if (!(threadKey in byThreadKey)) return byThreadKey;
     const { [threadKey]: _removed, ...rest } = byThreadKey;
@@ -640,6 +648,9 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                   ...(typeof validThreadState?.proactiveDiffTurnId === "string"
                     ? { proactiveDiffTurnId: RunId.make(validThreadState.proactiveDiffTurnId) }
                     : {}),
+                  ...(validThreadState?.crewBoardOffered === true
+                    ? { crewBoardOffered: true as const }
+                    : {}),
                   ...(Array.isArray(validThreadState?.dismissedDeviceSurfaceIds)
                     ? {
                         dismissedDeviceSurfaceIds:
@@ -740,6 +751,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         });
         return opened;
       },
+      offerCrewBoard: (ref) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          if (selectThreadRightPanelState(state.byThreadKey, ref).crewBoardOffered) return state;
+          return automaticUpdate(state, threadKey, (current) => ({
+            ...upsertSurface(current, singletonSurface("crew-board"), !current.isOpen),
+            crewBoardOffered: true,
+          }));
+        }),
       open: (ref, kind) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {

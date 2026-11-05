@@ -599,10 +599,14 @@ export function filterSidebarV2VisibleThreads<
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
   delegatedUnderParent: ReadonlySet<string>,
+  captainHiddenThreadKeys?: ReadonlySet<string>,
 ): T[] {
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
+      !captainHiddenThreadKeys?.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ) &&
       !isShownUnderParent(
         { environmentId: thread.environmentId, threadId: thread.id },
         thread.lineage,
