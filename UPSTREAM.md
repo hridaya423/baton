@@ -28,6 +28,9 @@ Each adopted upstream PR lands as one commit titled `adopt #NNNNN: <title>` and 
 | [#27031](https://github.com/pingdotgg/t3code/pull/27031) | feat(web,mobile): a Transcript view setting opens finished turns and rows                                     | `22ff6f4c5` |
 | [#31201](https://github.com/pingdotgg/t3code/pull/31201) | feat(composer): local mention index for PRs, threads, Jira, issues, and Figma                                 | `6487590eb` |
 | [#15902](https://github.com/pingdotgg/t3code/pull/15902) | feat(usage): break usage down by project, thread, account and environment                                     | `ea79fa30e` |
+| [#29820](https://github.com/pingdotgg/t3code/pull/29820) | fix(server): auto-settle no longer cuts off an agent whose awaited background task just finished              | `a132b7ed9` |
+| [#29869](https://github.com/pingdotgg/t3code/pull/29869) | fix(web,mobile): a settled thread says why it settled and how its PR ended                                    | `22b2bf18b` |
+| [#26704](https://github.com/pingdotgg/t3code/pull/26704) | fix(server): delegated children can watch their own PR, and the parent hears every result                     | `3216d73c6` |
 
 ## Where Baton differs
 
