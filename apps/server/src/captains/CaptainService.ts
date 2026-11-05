@@ -1,5 +1,7 @@
 import {
   type Captain,
+  type CaptainBoardEvent,
+  type CaptainBoardInput,
   CaptainError,
   CaptainCharter,
   type CaptainCharterPatch,
@@ -18,6 +20,7 @@ import {
   CaptainOrderId,
   type CaptainReview,
   type CaptainUpdateInput,
+  captainReviewThreadId,
   type CaptainVerifyResult,
   CommandId,
   DEFAULT_CAPTAIN_CHARTER,
@@ -46,6 +49,7 @@ import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
@@ -61,6 +65,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { toBoardOrder } from "./CaptainBoard.ts";
 import * as CaptainStore from "./CaptainStore.ts";
 import { installCrewHooks } from "./CrewHooks.ts";
 import { clipError, makeLandGit } from "./LandGit.ts";
@@ -169,6 +174,10 @@ export class CaptainService extends Context.Service<
     readonly create: (input: CaptainCreateInput) => Effect.Effect<Captain, CaptainError>;
     readonly list: (input: CaptainListInput) => Effect.Effect<ReadonlyArray<Captain>, CaptainError>;
     readonly get: (captainId: CaptainId) => Effect.Effect<Option.Option<Captain>, CaptainError>;
+    /** One snapshot of the captains, their orders and open needs-you items, then each change. */
+    readonly subscribeBoard: (
+      input: CaptainBoardInput,
+    ) => Stream.Stream<CaptainBoardEvent, CaptainError>;
     readonly release: (captainId: CaptainId) => Effect.Effect<Captain, CaptainError>;
     /** An in-memory answer, for tool visibility. Handlers check the database through the require methods. */
     readonly roleOf: (threadId: ThreadId) => Effect.Effect<CaptainRole | undefined>;
@@ -1544,7 +1553,7 @@ const make = Effect.gen(function* () {
       });
       return;
     }
-    const threadId = ThreadId.make(`captain-review:${order.id}:${round}`);
+    const threadId = captainReviewThreadId(order.id, round);
     let review: CaptainReview;
     if (previous !== null && !nextRound) {
       review = previous;
@@ -1882,6 +1891,43 @@ const make = Effect.gen(function* () {
   const list: CaptainService["Service"]["list"] = (input) => store.listCaptains(input);
 
   const get: CaptainService["Service"]["get"] = (captainId) => store.getCaptain(captainId);
+
+  const subscribeBoard: CaptainService["Service"]["subscribeBoard"] = (input) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        // Subscribe before reading, so a change made during the read is not lost.
+        const changes = yield* store.subscribeChanges;
+        const wanted = (captainId: CaptainId) =>
+          input.captainId === undefined || input.captainId === captainId;
+        const captains = (yield* store.listCaptains({})).filter((captain) => wanted(captain.id));
+        const orders = (yield* Effect.forEach(captains, (captain) =>
+          store.listOrders(captain.id),
+        )).flat();
+        const escalations = (yield* store.listEscalations({ status: "open" })).filter((item) =>
+          wanted(item.captainId),
+        );
+        const snapshot: CaptainBoardEvent = {
+          type: "snapshot",
+          captains,
+          orders: orders.map(toBoardOrder),
+          escalations,
+        };
+        return Stream.concat(
+          Stream.make(snapshot),
+          Stream.fromSubscription(changes).pipe(
+            Stream.filter((event) =>
+              wanted(
+                event.type === "captain"
+                  ? event.captain.id
+                  : event.type === "order"
+                    ? event.order.captainId
+                    : event.escalation.captainId,
+              ),
+            ),
+          ),
+        );
+      }),
+    );
 
   const release: CaptainService["Service"]["release"] = Effect.fn("CaptainService.release")(
     function* (captainId) {
@@ -2729,6 +2775,7 @@ const make = Effect.gen(function* () {
     create,
     list,
     get,
+    subscribeBoard,
     release,
     roleOf,
     requireCaptain,

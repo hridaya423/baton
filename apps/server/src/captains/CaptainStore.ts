@@ -1,5 +1,6 @@
 import {
   Captain,
+  type CaptainBoardEvent,
   CaptainCharter,
   CaptainCrewReport,
   CaptainError,
@@ -24,8 +25,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
+
+import { toBoardOrder } from "./CaptainBoard.ts";
 
 const StringArrayJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const OrderIdArrayJson = Schema.fromJsonString(Schema.Array(CaptainOrderId));
@@ -218,6 +223,12 @@ export interface OrderPatch {
 export class CaptainStore extends Context.Service<
   CaptainStore,
   {
+    /** Every committed change to a captain, order or needs-you item, for the board. Touching activity is not one. */
+    readonly subscribeChanges: Effect.Effect<
+      PubSub.Subscription<Exclude<CaptainBoardEvent, { readonly type: "snapshot" }>>,
+      never,
+      Scope.Scope
+    >;
     readonly insertCaptain: (captain: Captain) => Effect.Effect<void, CaptainError>;
     readonly setCaptainStatus: (input: {
       readonly captainId: CaptainId;
@@ -314,6 +325,42 @@ export class CaptainStore extends Context.Service<
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const changes =
+    yield* PubSub.unbounded<Exclude<CaptainBoardEvent, { readonly type: "snapshot" }>>();
+
+  // A failed read must not fail the write that already committed.
+  const publishCaptain = (captainId: CaptainId) =>
+    getCaptain(captainId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (captain) => PubSub.publish(changes, { type: "captain", captain }),
+        }),
+      ),
+      Effect.ignore,
+    );
+
+  const publishOrder = (orderId: CaptainOrderId) =>
+    getOrder(orderId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (order) => PubSub.publish(changes, { type: "order", order: toBoardOrder(order) }),
+        }),
+      ),
+      Effect.ignore,
+    );
+
+  const publishEscalation = (escalationId: CaptainEscalationId) =>
+    getEscalation(escalationId).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (escalation) => PubSub.publish(changes, { type: "escalation", escalation }),
+        }),
+      ),
+      Effect.ignore,
+    );
 
   const insertCaptain = Effect.fn("CaptainStore.insertCaptain")(function* (captain: Captain) {
     yield* sql`
@@ -323,6 +370,7 @@ const make = Effect.gen(function* () {
         (${captain.id}, ${captain.projectId}, ${captain.threadId}, ${captain.name},
          ${captain.status}, ${encodeCharter(captain.charter)}, ${captain.createdAt}, ${captain.updatedAt})
     `.pipe(storage);
+    yield* publishCaptain(captain.id);
   });
 
   const setCaptainStatus = Effect.fn("CaptainStore.setCaptainStatus")(function* (input: {
@@ -334,6 +382,7 @@ const make = Effect.gen(function* () {
       UPDATE captains SET status = ${input.status}, updated_at = ${input.at}
       WHERE captain_id = ${input.captainId}
     `.pipe(storage);
+    yield* publishCaptain(input.captainId);
   });
 
   const setCaptainCharter = Effect.fn("CaptainStore.setCaptainCharter")(function* (input: {
@@ -394,6 +443,7 @@ const make = Effect.gen(function* () {
          ${order.lastReport === null ? null : encodeReport(order.lastReport)},
          ${order.createdAt}, ${order.updatedAt}, ${order.lastActivityAt})
     `.pipe(storage);
+    yield* publishOrder(order.id);
   });
 
   const getOrder = Effect.fn("CaptainStore.getOrder")(function* (id: CaptainOrderId) {
@@ -439,6 +489,7 @@ const make = Effect.gen(function* () {
       WHERE order_id = ${claim.orderId} AND state = 'queued'
       RETURNING order_id
     `.pipe(storage);
+    if (rows.length > 0) yield* publishOrder(claim.orderId);
     return rows.length > 0;
   });
 
@@ -453,6 +504,7 @@ const make = Effect.gen(function* () {
       WHERE order_id = ${input.orderId} AND state IN ${sql.in(input.from)}
       RETURNING order_id
     `.pipe(storage);
+    if (rows.length > 0) yield* publishOrder(input.orderId);
     return rows.length > 0;
   });
 
@@ -473,6 +525,7 @@ const make = Effect.gen(function* () {
       WHERE order_id = ${input.orderId}
       RETURNING state
     `.pipe(storage);
+    yield* publishOrder(input.orderId);
     return (rows[0]?.state ?? "dropped") as CaptainOrderState;
   });
 
@@ -497,6 +550,7 @@ const make = Effect.gen(function* () {
       WHERE order_id = ${input.orderId} AND state IN ${sql.in(input.from)}
       RETURNING order_id
     `.pipe(storage);
+    if (rows.length > 0) yield* publishOrder(input.orderId);
     return rows.length > 0;
   });
 
@@ -553,6 +607,7 @@ const make = Effect.gen(function* () {
          ${escalation.status}, ${escalation.resolution}, ${escalation.requestId},
          ${escalation.createdAt}, ${escalation.resolvedAt})
     `.pipe(storage);
+    yield* publishEscalation(escalation.id);
   });
 
   const getEscalation = Effect.fn("CaptainStore.getEscalation")(function* (
@@ -606,6 +661,7 @@ const make = Effect.gen(function* () {
       WHERE escalation_id = ${input.id} AND status = 'open'
       RETURNING escalation_id
     `.pipe(storage);
+    if (rows.length > 0) yield* publishEscalation(input.id);
     return rows.length > 0;
   });
 
@@ -621,7 +677,13 @@ const make = Effect.gen(function* () {
         WHERE order_id = ${input.orderId} AND kind = ${input.kind} AND status = 'open'
         RETURNING *
       `.pipe(storage);
-      return yield* Effect.forEach(rows, escalationFromRow).pipe(storage);
+      const resolved = yield* Effect.forEach(rows, escalationFromRow).pipe(storage);
+      yield* Effect.forEach(
+        resolved,
+        (escalation) => PubSub.publish(changes, { type: "escalation", escalation }),
+        { discard: true },
+      );
+      return resolved;
     },
   );
 
@@ -635,6 +697,7 @@ const make = Effect.gen(function* () {
   });
 
   return CaptainStore.of({
+    subscribeChanges: PubSub.subscribe(changes),
     insertCaptain,
     setCaptainStatus,
     setCaptainCharter,

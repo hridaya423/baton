@@ -371,6 +371,8 @@ import {
   ServerSettingsPatch,
 } from "./settings.ts";
 import {
+  CaptainBoardEvent,
+  CaptainBoardInput,
   CaptainCreateInput,
   CaptainCreateResult,
   CaptainError,
@@ -576,6 +578,7 @@ export const WS_METHODS = {
   captainsCreate: "captains.create",
   captainsList: "captains.list",
   captainsRelease: "captains.release",
+  captainsBoardSubscribe: "captains.board.subscribe",
   captainsEscalationsList: "captains.escalations.list",
   captainsEscalationsResolve: "captains.escalations.resolve",
   captainsOrdersList: "captains.orders.list",
@@ -2027,6 +2030,13 @@ const WsCaptainsReleaseRpc = Rpc.make(WS_METHODS.captainsRelease, {
   error: Schema.Union([CaptainError, EnvironmentAuthorizationError]),
 });
 
+const WsCaptainsBoardSubscribeRpc = Rpc.make(WS_METHODS.captainsBoardSubscribe, {
+  payload: CaptainBoardInput,
+  success: CaptainBoardEvent,
+  error: Schema.Union([CaptainError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 const WsCaptainsEscalationsListRpc = Rpc.make(WS_METHODS.captainsEscalationsList, {
   payload: CaptainEscalationsListInput,
   success: CaptainEscalationsListResult,
@@ -2219,6 +2229,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCaptainsCreateRpc,
   WsCaptainsListRpc,
   WsCaptainsReleaseRpc,
+  WsCaptainsBoardSubscribeRpc,
   WsCaptainsEscalationsListRpc,
   WsCaptainsEscalationsResolveRpc,
   WsCaptainsOrdersListRpc,

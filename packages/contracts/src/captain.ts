@@ -581,3 +581,65 @@ export type CaptainUpdateInput = typeof CaptainUpdateInput.Type;
 
 export const CaptainUpdateResult = Schema.Struct({ captain: Captain });
 export type CaptainUpdateResult = typeof CaptainUpdateResult.Type;
+export const CaptainBoardInput = Schema.Struct({ captainId: Schema.optional(CaptainId) });
+export type CaptainBoardInput = typeof CaptainBoardInput.Type;
+
+/** An order as the board stream carries it: no brief, report or log tail. The card asks for those. */
+export const CaptainBoardOrder = Schema.Struct({
+  id: CaptainOrderId,
+  captainId: CaptainId,
+  threadId: Schema.NullOr(ThreadId),
+  kind: CaptainOrderKind,
+  title: TrimmedNonEmptyString,
+  delivery: CaptainOrderDelivery,
+  state: CaptainOrderState,
+  retries: NonNegativeInt,
+  branch: Schema.NullOr(Schema.String),
+  dependsOn: Schema.Array(CaptainOrderId),
+  placement: CaptainPlacement,
+  lastReport: Schema.NullOr(
+    Schema.Struct({
+      status: CaptainCrewReportStatus,
+      summary: Schema.String,
+      at: IsoDateTime,
+    }),
+  ),
+  verify: Schema.NullOr(
+    Schema.Struct({
+      cmd: Schema.String,
+      exit: Schema.NullOr(Schema.Int),
+      finishedAt: IsoDateTime,
+    }),
+  ),
+  review: Schema.NullOr(
+    Schema.Struct({
+      round: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      model: ModelSelection,
+      sameProvider: Schema.Boolean,
+      verdict: Schema.NullOr(CaptainReviewVerdict),
+      findingsCount: NonNegativeInt,
+      /** Every round's reviewer thread, so clients can keep reviewer threads out of thread lists. */
+      threadIds: Schema.Array(ThreadId),
+    }),
+  ),
+  land: Schema.NullOr(CaptainLandResult),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type CaptainBoardOrder = typeof CaptainBoardOrder.Type;
+
+export const CaptainBoardEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("snapshot"),
+    captains: Schema.Array(Captain),
+    orders: Schema.Array(CaptainBoardOrder),
+    escalations: Schema.Array(CaptainEscalation),
+  }),
+  Schema.Struct({ type: Schema.Literal("captain"), captain: Captain }),
+  Schema.Struct({ type: Schema.Literal("order"), order: CaptainBoardOrder }),
+  Schema.Struct({ type: Schema.Literal("escalation"), escalation: CaptainEscalation }),
+]);
+export type CaptainBoardEvent = typeof CaptainBoardEvent.Type;
+
+export const captainReviewThreadId = (orderId: CaptainOrderId, round: number) =>
+  ThreadId.make(`captain-review:${orderId}:${round}`);

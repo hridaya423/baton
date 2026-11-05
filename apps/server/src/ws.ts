@@ -2381,6 +2381,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.captainsList]: (input) =>
           captains.list(input).pipe(Effect.map((list) => ({ captains: list }))),
+        [WS_METHODS.captainsBoardSubscribe]: (input) => captains.subscribeBoard(input),
         [WS_METHODS.captainsEscalationsList]: (input) =>
           captains
             .listEscalations({ captainId: input.captainId, status: "open" })
