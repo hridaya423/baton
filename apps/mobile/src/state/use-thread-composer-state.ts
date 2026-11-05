@@ -698,6 +698,7 @@ export function useThreadComposerState() {
         provider,
         draft.interactionMode ?? thread.interactionMode,
       ),
+      ...(draft.designMode === undefined ? {} : { designMode: draft.designMode }),
       ...(compactBeforeSend
         ? { compactBeforeSend, dispatchMode: "queue" as const }
         : followUpDispatchMode === null

@@ -157,6 +157,7 @@ type NewTaskFlowContextValue = {
   readonly currentCheckoutBranchName: string | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly designMode: boolean;
   readonly planModeEnabled: boolean;
   readonly expandedProvider: string | null;
   readonly environments: ReadonlyArray<{
@@ -210,6 +211,7 @@ type NewTaskFlowContextValue = {
   readonly loadBranches: () => void;
   readonly setRuntimeMode: (value: RuntimeMode) => void;
   readonly setInteractionMode: (value: ProviderInteractionMode) => void;
+  readonly setDesignMode: (value: boolean) => void;
   readonly setSelectedModelOptions: (
     value: ReadonlyArray<ProviderOptionSelection> | undefined,
   ) => void;
@@ -704,6 +706,12 @@ export function NewTaskFlowProvider(
     refreshBranches();
   };
 
+  const designMode = selectedProjectDraft.designMode === true;
+  const setDesignMode = (value: boolean) => {
+    if (selectedProjectDraftKey) {
+      updateComposerDraftSettings(selectedProjectDraftKey, { designMode: value });
+    }
+  };
   const setRuntimeMode = (value: RuntimeMode) => {
     if (selectedProjectDraftKey) {
       updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
@@ -761,6 +769,7 @@ export function NewTaskFlowProvider(
         defaultRuntimeMode,
         managedPolicy,
       ),
+      ...(draft.designMode ? { designMode: true } : {}),
       interactionMode: resolvePendingTaskInteractionMode({
         planModeEnabled: legacyPlanModeEnabled,
         draftInteractionMode: draft.interactionMode,
@@ -876,6 +885,7 @@ export function NewTaskFlowProvider(
     currentCheckoutBranchName,
     runtimeMode,
     interactionMode,
+    designMode,
     planModeEnabled,
     expandedProvider,
     environments,
@@ -907,6 +917,7 @@ export function NewTaskFlowProvider(
     setSubmitting: (value: boolean) => updateFlow({ submitting: value }),
     loadBranches,
     setRuntimeMode,
+    setDesignMode,
     setInteractionMode,
     setSelectedModelOptions,
     setExpandedProvider: (value: string | null) => updateFlow({ expandedProvider: value }),

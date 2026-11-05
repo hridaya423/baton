@@ -305,6 +305,8 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  /** Absent where Design mode does not apply, such as a scheduled task. */
+  readonly design?: { readonly enabled: boolean; readonly onChange: (enabled: boolean) => void };
 };
 
 /** The composer draft the sheet edits: the thread's own, or a queued message being edited. */
@@ -330,6 +332,7 @@ type ThreadSettingsSessionValue = {
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModeChoices: ReadonlyArray<RuntimeModeChoice>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly design: ThreadSettingsSessionProps["design"];
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly promptTraits: ReturnType<typeof getPromptControlledTraits>;
   readonly displayedModelSelection: ModelSelection | null;
@@ -643,6 +646,7 @@ function ThreadSettingsSessionProvider(
     runtimeMode: compatibleRuntimeMode,
     runtimeModeChoices,
     onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+    design: props.design,
     displayedDescriptors,
     promptTraits,
     displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
@@ -956,6 +960,15 @@ function ThreadSettingsOptionsItem(props: {
             </Animated.View>
           );
         })}
+        {session.design ? (
+          <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
+            <SwitchRow
+              label="Design"
+              value={session.design.enabled}
+              onValueChange={session.design.onChange}
+            />
+          </Animated.View>
+        ) : null}
         <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
           <DisclosureRow
             isLast
@@ -1443,6 +1456,10 @@ export function ExistingThreadSettingsRouteScreen({
       }}
       runtimeMode={draftSettings.runtimeMode ?? selectedThread.runtimeMode}
       onUpdateRuntimeMode={(runtimeMode) => updateComposerDraftSettings(threadKey, { runtimeMode })}
+      design={{
+        enabled: draftSettings.designMode ?? selectedThread.designMode === true,
+        onChange: (designMode) => updateComposerDraftSettings(threadKey, { designMode }),
+      }}
       onClose={() => navigation.goBack()}
     />
   );
@@ -1472,6 +1489,7 @@ export function NewTaskThreadSettingsRouteScreen() {
       onUpdateOptionSelections={flow.setSelectedModelOptions}
       runtimeMode={flow.runtimeMode}
       onUpdateRuntimeMode={flow.setRuntimeMode}
+      design={{ enabled: flow.designMode, onChange: flow.setDesignMode }}
       onClose={() => navigation.goBack()}
     />
   );

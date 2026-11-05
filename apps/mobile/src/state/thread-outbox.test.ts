@@ -82,6 +82,7 @@ import {
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
+  queuedDesignModeChange,
   resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
   type QueuedThreadMessage,
@@ -389,6 +390,18 @@ describe("thread outbox", () => {
         providers,
       ).interactionMode,
     ).toBe("plan");
+  });
+
+  it("switches Design mode only when the message chose it and the thread differs", () => {
+    const base = queuedMessage({
+      messageId: "queued-design",
+      createdAt: "2026-09-02T10:00:00.000Z",
+    });
+    expect(queuedDesignModeChange(base, { designMode: true })).toBe(false);
+    expect(queuedDesignModeChange({ ...base, designMode: true }, {})).toBe(true);
+    expect(queuedDesignModeChange({ ...base, designMode: true }, { designMode: true })).toBe(false);
+    expect(queuedDesignModeChange({ ...base, designMode: false }, { designMode: true })).toBe(true);
+    expect(queuedDesignModeChange({ ...base, designMode: false }, {})).toBe(false);
   });
 
   it("holds the mutation queue while persisted messages are loading", async () => {

@@ -59,6 +59,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   compactBeforeSend: Schema.optional(Schema.Boolean),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  designMode: Schema.optional(Schema.Boolean),
   creation: Schema.optional(QueuedThreadCreationSchema),
   createdAt: IsoDateTime,
 });
@@ -88,6 +89,7 @@ export interface QueuedThreadMessage {
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
+  readonly designMode?: boolean;
   /** Captured at enqueue because draining may occur long after the tap. */
   readonly dispatchMode?: ComposerDispatchMode;
   /** Sends "When you return"'s `/compact` ahead of the message, which queues behind it. */
@@ -100,6 +102,7 @@ export interface ThreadSettingsSnapshot {
   readonly modelSelection: ModelSelectionType;
   readonly runtimeMode: RuntimeModeType;
   readonly interactionMode: ProviderInteractionModeType;
+  readonly designMode?: boolean;
 }
 
 export function resolveQueuedThreadSettings(
@@ -118,7 +121,20 @@ export function resolveQueuedThreadSettings(
       provider,
       message.interactionMode ?? thread.interactionMode,
     ),
+    ...resolvedDesignMode(message.designMode ?? thread.designMode),
   };
+}
+
+function resolvedDesignMode(designMode: boolean | undefined) {
+  return designMode === undefined ? {} : { designMode };
+}
+
+/** Whether a send must first switch the thread's Design mode; a draft that never touched it changes nothing. */
+export function queuedDesignModeChange(
+  message: Pick<QueuedThreadMessage, "designMode">,
+  thread: Pick<ThreadSettingsSnapshot, "designMode">,
+): boolean {
+  return message.designMode !== undefined && message.designMode !== (thread.designMode === true);
 }
 
 export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelectionType): boolean {

@@ -62,6 +62,7 @@ import {
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
+  queuedDesignModeChange,
   resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
@@ -364,6 +365,7 @@ export async function recoverEditedCreationAfterDelivery(
       ...(kept.modelSelection !== undefined ? { modelSelection: kept.modelSelection } : {}),
       ...(kept.runtimeMode !== undefined ? { runtimeMode: kept.runtimeMode } : {}),
       ...(kept.interactionMode !== undefined ? { interactionMode: kept.interactionMode } : {}),
+      ...(kept.designMode !== undefined ? { designMode: kept.designMode } : {}),
     });
     // Flush before removal: append only schedules persistence, leaving the queue as the sole durable copy.
     await flushComposerDrafts();
@@ -449,6 +451,7 @@ export async function restoreRejectedQueuedMessage(
       ...(queuedMessage.modelSelection ? { modelSelection: queuedMessage.modelSelection } : {}),
       ...(queuedMessage.runtimeMode ? { runtimeMode: queuedMessage.runtimeMode } : {}),
       ...(queuedMessage.interactionMode ? { interactionMode: queuedMessage.interactionMode } : {}),
+      ...(queuedMessage.designMode !== undefined ? { designMode: queuedMessage.designMode } : {}),
       ...(queuedMessage.creation
         ? {
             workspaceSelection: {
@@ -809,7 +812,10 @@ export function createThreadOutboxDelivery(): {
       }
     }
 
-    if (settings.interactionMode !== thread.interactionMode) {
+    if (
+      settings.interactionMode !== thread.interactionMode ||
+      queuedDesignModeChange(queuedMessage, thread)
+    ) {
       if (!hasAccess()) return true;
       const interactionResult = await runDeliveryCommand(threadEnvironment.setInteractionMode, {
         environmentId: queuedMessage.environmentId,
@@ -817,6 +823,9 @@ export function createThreadOutboxDelivery(): {
           commandId: settingsCommandId(queuedMessage, "interaction-mode"),
           threadId: queuedMessage.threadId,
           interactionMode: settings.interactionMode,
+          ...(queuedDesignModeChange(queuedMessage, thread)
+            ? { designMode: queuedMessage.designMode }
+            : {}),
           createdAt: queuedMessage.createdAt,
         },
       });
@@ -1096,6 +1105,7 @@ export function createThreadOutboxDelivery(): {
         modelSelection: sendSettings.modelSelection,
         runtimeMode: sendSettings.runtimeMode,
         interactionMode: sendSettings.interactionMode,
+        ...(sendSettings.designMode === undefined ? {} : { designMode: sendSettings.designMode }),
         workspaceMode: workspace.workspaceMode,
         branch: workspace.branch,
         worktreePath: workspace.worktreePath,
