@@ -9,6 +9,8 @@ import {
   CaptainMcpOrderCreateResult,
   CaptainMcpOrderDropInput,
   CaptainMcpOrderDropResult,
+  CaptainMcpOrderLandInput,
+  CaptainMcpOrderLandResult,
   CaptainMcpOrderListResult,
   CaptainMcpOrderReadInput,
   CaptainMcpOrderReadResult,
@@ -124,6 +126,19 @@ const OrderRetryTool = Tool.make("order_retry", {
   .annotate(Tool.Destructive, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToCaptains);
 
+const OrderLandTool = Tool.make("order_land", {
+  description:
+    "Deliver an accepted order, or retry one whose landing failed. `delivery` overrides the order's: none keeps the branch local, branch pushes it, pr opens a pull request. merge opens a needs-you approval for the user; you cannot merge yourself. Tell the user in one line when an approval is open.",
+  parameters: CaptainMcpOrderLandInput,
+  success: CaptainMcpOrderLandResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Land an order")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.visibleToCaptains);
+
 const EscalateTool = Tool.make("escalate", {
   description:
     "Open a needs-you item for the user: a decision, a one-way door, a budget or a conflict. Then say it in one line with the choices.",
@@ -171,6 +186,7 @@ export const CaptainToolkit = Toolkit.make(
   OrderDropTool,
   OrderAnswerTool,
   OrderRetryTool,
+  OrderLandTool,
   EscalateTool,
   CrewReportTool,
   ReviewSubmitTool,

@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - the real-git mode makes linked worktrees the way a launch would.
+import * as NodeChildProcess from "node:child_process";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -27,7 +30,9 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as CaptainReactor from "./CaptainReactor.ts";
 import * as CaptainService from "./CaptainService.ts";
 import * as CaptainStore from "./CaptainStore.ts";
@@ -116,7 +121,41 @@ export interface CaptainHarnessOptions {
   readonly providers?: ReadonlyArray<unknown>;
   /** What `git diff` prints for a crew branch. */
   readonly diff?: string;
+  /** Real git: the project is `dir`, and each launch adds a linked worktree under `worktreeRoot`. */
+  readonly repo?: { readonly dir: string; readonly worktreeRoot: string };
+  readonly sourceControl?: Partial<
+    SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]
+  >;
 }
+
+const layerMockGit = (options: CaptainHarnessOptions) =>
+  Layer.mock(GitVcsDriver.GitVcsDriver)({
+    execute: (input) => {
+      const diff = options.diff ?? "diff --git a/README.md b/README.md\n+hello\n";
+      const names = input.args.includes("--name-status");
+      const limit = input.maxOutputBytes ?? Number.MAX_SAFE_INTEGER;
+      const stdout = names ? "M\tREADME.md\n" : diff;
+      const truncated = Buffer.byteLength(stdout) > limit;
+      return Effect.succeed({
+        exitCode: 0,
+        stdout: truncated ? stdout.slice(0, limit) : stdout,
+        stderr: "",
+        stdoutTruncated: truncated,
+        stderrTruncated: false,
+      } as never);
+    },
+    resolvePrimaryRemoteName: () => Effect.fail(new Error("no remote") as never),
+    resolveDefaultBranchName: () => Effect.succeed(null),
+    resolveCommit: ({ revision }) =>
+      revision === "main"
+        ? Effect.succeed({ commitSha: baseSha })
+        : Effect.fail(new Error("no ref") as never),
+  });
+
+const layerRealGit = GitVcsDriver.layer.pipe(
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-captain-git-" })),
+  Layer.provide(VcsProcess.layer),
+);
 
 /** In-memory stand-ins for the thread services, so tests read what the captain code asked of them. */
 export const makeHarness = (options: CaptainHarnessOptions = {}) => {
@@ -170,16 +209,27 @@ export const makeHarness = (options: CaptainHarnessOptions = {}) => {
         : Effect.sync(() => {
             launches.push(input);
             const threadId = input.threadId ?? ThreadId.make(`thread:launched:${launches.length}`);
-            shells.set(
-              threadId,
-              shell(threadId, {
-                runtimeMode: input.runtimeMode,
-                worktreePath:
-                  input.workspaceStrategy.type === "existing_worktree"
-                    ? input.workspaceStrategy.worktreePath
-                    : (options.worktreeDir ?? null),
-              }),
-            );
+            const strategy = input.workspaceStrategy;
+            let worktreePath =
+              strategy.type === "existing_worktree"
+                ? strategy.worktreePath
+                : (options.worktreeDir ?? null);
+            if (options.repo !== undefined && strategy.type === "worktree") {
+              worktreePath = `${options.repo.worktreeRoot}/${threadId.replaceAll(/[^a-z0-9]+/gi, "-")}`;
+              NodeChildProcess.execFileSync(
+                "git",
+                [
+                  "worktree",
+                  "add",
+                  "-b",
+                  strategy.branch ?? "crew",
+                  worktreePath,
+                  strategy.baseRef ?? "HEAD",
+                ],
+                { cwd: options.repo.dir, stdio: "pipe" },
+              );
+            }
+            shells.set(threadId, shell(threadId, { runtimeMode: input.runtimeMode, worktreePath }));
             return { threadId, projection: {} as never, resumed: false };
           }),
   });
@@ -193,29 +243,12 @@ export const makeHarness = (options: CaptainHarnessOptions = {}) => {
       getProviders: Effect.succeed((options.providers ?? defaultProviders) as never),
     }),
     Layer.mock(ProjectService.ProjectService)({
-      getById: () => Effect.succeedSome({ workspaceRoot: "/repo" } as never),
+      getById: () => Effect.succeedSome({ workspaceRoot: options.repo?.dir ?? "/repo" } as never),
     }),
-    Layer.mock(GitVcsDriver.GitVcsDriver)({
-      execute: (input) => {
-        const diff = options.diff ?? "diff --git a/README.md b/README.md\n+hello\n";
-        const names = input.args.includes("--name-status");
-        const limit = input.maxOutputBytes ?? Number.MAX_SAFE_INTEGER;
-        const stdout = names ? "M\tREADME.md\n" : diff;
-        const truncated = Buffer.byteLength(stdout) > limit;
-        return Effect.succeed({
-          exitCode: 0,
-          stdout: truncated ? stdout.slice(0, limit) : stdout,
-          stderr: "",
-          stdoutTruncated: truncated,
-          stderrTruncated: false,
-        } as never);
-      },
-      resolvePrimaryRemoteName: () => Effect.fail(new Error("no remote") as never),
-      resolveDefaultBranchName: () => Effect.succeed(null),
-      resolveCommit: ({ revision }) =>
-        revision === "main"
-          ? Effect.succeed({ commitSha: baseSha })
-          : Effect.fail(new Error("no ref") as never),
+    options.repo === undefined ? layerMockGit(options) : layerRealGit,
+    Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+      resolveLink: () => Effect.die("unused"),
+      ...options.sourceControl,
     }),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(environmentId),

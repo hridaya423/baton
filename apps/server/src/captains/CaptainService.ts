@@ -1,6 +1,8 @@
 import {
   type Captain,
   CaptainError,
+  CaptainCharter,
+  type CaptainCharterPatch,
   type CaptainCreateInput,
   type CaptainCrewReportStatus,
   type CaptainEscalation,
@@ -12,8 +14,10 @@ import {
   type CaptainMcpOrderCreateInput,
   type CaptainMcpReviewSubmitInput,
   type CaptainOrder,
+  type CaptainOrderDelivery,
   CaptainOrderId,
   type CaptainReview,
+  type CaptainUpdateInput,
   type CaptainVerifyResult,
   CommandId,
   DEFAULT_CAPTAIN_CHARTER,
@@ -40,6 +44,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 
@@ -53,10 +58,17 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as CaptainStore from "./CaptainStore.ts";
+import { installCrewHooks } from "./CrewHooks.ts";
+import { clipError, makeLandGit } from "./LandGit.ts";
 import {
   REVIEW_DIFF_MAX_BYTES,
+  pullRequestBody,
+  rebaseConflictMessage,
+  rebaseFailedMessage,
   reviewRejectedMessage,
   reviewerBrief,
   verifyFailedMessage,
@@ -122,12 +134,32 @@ const CLAIM_TTL_MS = 3 * 60 * 60 * 1_000;
 const REVIEW_REPROMPT =
   "You finished without calling review_submit. Call it now with your verdict: approve, or reject with your findings.";
 const WORK_STATES = ["running", "verifying", "verify_failed", "reviewing"] as const;
+const RETRY_STATES = [...WORK_STATES, "accepted", "land_failed"] as const;
+const DROP_STATES = [...WORK_STATES, "queued", "accepted", "land_failed"] as const;
+const MERGE_APPROVAL_PREFIX = "merge:";
+const LAND_RETRY_LIMIT = 3;
+const RESUME_NUDGE =
+  "The captain resumed. Continue your order, or call crew_report if you are done or blocked.";
+
+const mergeApprovalKey = (order: Pick<CaptainOrder, "id" | "retries">) =>
+  `${MERGE_APPROVAL_PREFIX}${order.id}:${order.retries}`;
+
+const isMergeApproval = (escalation: Pick<CaptainEscalation, "requestId">) =>
+  escalation.requestId?.startsWith(MERGE_APPROVAL_PREFIX) === true;
+
+const mergeDecision = (resolution: string): "merge" | "hold" | undefined => {
+  if (/^\s*(merge|approve|approved|yes)\b/i.test(resolution)) return "merge";
+  if (/^\s*(hold|deny|denied|decline|no)\b/i.test(resolution)) return "hold";
+  return undefined;
+};
 
 const approvalDecision = (resolution: string): "accept" | "decline" | undefined => {
   if (/^\s*(approve|approved|accept|yes)\b/i.test(resolution)) return "accept";
   if (/^\s*(deny|denied|decline|reject|no)\b/i.test(resolution)) return "decline";
   return undefined;
 };
+
+const decodeCharter = Schema.decodeUnknownEffect(CaptainCharter);
 
 const times = (count: number) => (count === 2 ? "twice" : `${count} times`);
 
@@ -196,6 +228,32 @@ export class CaptainService extends Context.Service<
       readonly orderId: CaptainOrderId;
       readonly reason: string;
     }) => Effect.Effect<CaptainOrder, CaptainError>;
+    /** A merge asks the user first unless `approved`, which only a user's own action sets. */
+    readonly landOrder: (input: {
+      readonly captain: Captain;
+      readonly orderId: CaptainOrderId;
+      readonly delivery: CaptainOrderDelivery | undefined;
+      readonly approved: boolean;
+    }) => Effect.Effect<
+      { readonly order: CaptainOrder; readonly needsApproval: boolean },
+      CaptainError
+    >;
+    readonly listOrdersOf: (
+      captainId: CaptainId,
+    ) => Effect.Effect<ReadonlyArray<CaptainOrder>, CaptainError>;
+    readonly landOrderById: (input: {
+      readonly orderId: CaptainOrderId;
+      readonly delivery: CaptainOrderDelivery | undefined;
+    }) => Effect.Effect<CaptainOrder, CaptainError>;
+    readonly retryOrderById: (input: {
+      readonly orderId: CaptainOrderId;
+      readonly brief: string | undefined;
+    }) => Effect.Effect<CaptainOrder, CaptainError>;
+    readonly dropOrderById: (input: {
+      readonly orderId: CaptainOrderId;
+      readonly reason: string | undefined;
+    }) => Effect.Effect<CaptainOrder, CaptainError>;
+    readonly update: (input: CaptainUpdateInput) => Effect.Effect<Captain, CaptainError>;
     readonly crewReport: (input: {
       readonly threadId: ThreadId;
       readonly report: CaptainMcpCrewReportInput;
@@ -245,12 +303,15 @@ const make = Effect.gen(function* () {
   const threadRoles = yield* ThreadRoles.ThreadRoles;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const landGit = makeLandGit(git);
   const scope = yield* Effect.scope;
 
   const signals = yield* PubSub.unbounded<CrewSignal>();
   const permit = yield* Semaphore.make(1);
   const due = DueHint.make();
   const workFibers = new Map<CaptainOrderId, Fiber.Fiber<void>>();
+  const projectLocks = new Map<ProjectId, Semaphore.Semaphore>();
   const kicked = new Map<symbol, Fiber.Fiber<void>>();
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -503,6 +564,35 @@ const make = Effect.gen(function* () {
             ),
         ),
       );
+    const launched = yield* store.getOrder(order.id);
+    if (Option.isNone(launched) || launched.value.state !== "running") return;
+    yield* guardWorktree(captain, crewing).pipe(
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("installing the crew push guard failed", {
+            orderId: order.id,
+            cause,
+          }).pipe(
+            Effect.andThen(
+              stopThread(
+                captain,
+                crewing,
+                threadId,
+                "The push guard could not be installed.",
+                true,
+              ),
+            ),
+            Effect.andThen(
+              failOrder(
+                captain,
+                crewing,
+                "The crew's push guard could not be installed, so it was not allowed to run.",
+              ),
+            ),
+          ),
+      ),
+    );
   });
 
   const admitCaptain = Effect.fn("CaptainService.admitCaptain")(function* (captain: Captain) {
@@ -632,32 +722,18 @@ const make = Effect.gen(function* () {
   const verifyFailureDetail = (verify: CaptainVerifyResult) =>
     `Command: ${verify.cmd}\nExit code: ${verify.exit === null ? "none" : verify.exit}\n${verify.logTail}`;
 
-  const applyVerification = Effect.fn("CaptainService.applyVerification")(function* (
+  const failVerification = Effect.fn("CaptainService.failVerification")(function* (
     captain: Captain,
     order: CaptainOrder,
     verify: CaptainVerifyResult,
+    from: ReadonlyArray<CaptainOrder["state"]>,
   ) {
     const at = yield* nowIso;
-    if (verify.exit === 0) {
-      const to = order.kind === "change" ? "reviewing" : "done";
-      const moved = yield* store.patchOrder({
-        orderId: order.id,
-        from: ["verifying"],
-        at,
-        state: to,
-        verify,
-      });
-      if (!moved) return;
-      yield* note(captain, order, `verify:${order.id}:${order.retries}:pass`, "verify passed");
-      yield* to === "done" ? admitNow(captain) : kick;
-      return;
-    }
     const retries = order.retries + 1;
     const exhausted = retries > captain.charter.retryLimit;
-    const failed = { ...order, retries, verify };
     const moved = yield* store.patchOrder({
       orderId: order.id,
-      from: ["verifying"],
+      from,
       at,
       state: "verify_failed",
       retries,
@@ -683,9 +759,29 @@ const make = Effect.gen(function* () {
     }
     yield* settleFailedGate(
       captain,
-      { ...failed, pendingFollowUp: verifyFailedMessage(verify) },
+      { ...order, retries, verify, pendingFollowUp: verifyFailedMessage(verify) },
       `verify failed (${exit}), sent back`,
     );
+  });
+
+  const applyVerification = Effect.fn("CaptainService.applyVerification")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    verify: CaptainVerifyResult,
+  ) {
+    if (verify.exit !== 0) return yield* failVerification(captain, order, verify, ["verifying"]);
+    const at = yield* nowIso;
+    const to = order.kind === "change" ? "reviewing" : "done";
+    const moved = yield* store.patchOrder({
+      orderId: order.id,
+      from: ["verifying"],
+      at,
+      state: to,
+      verify,
+    });
+    if (!moved) return;
+    yield* note(captain, order, `verify:${order.id}:${order.retries}:pass`, "verify passed");
+    yield* to === "done" ? admitNow(captain) : kick;
   });
 
   const crewCwd = Effect.fn("CaptainService.crewCwd")(function* (
@@ -722,6 +818,642 @@ const make = Effect.gen(function* () {
               Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
             );
     if (verify !== undefined) yield* applyVerification(captain, order, verify);
+  });
+
+  const projectCwdOf = Effect.fn("CaptainService.projectCwdOf")(function* (captain: Captain) {
+    const project = yield* projects
+      .getById(captain.projectId)
+      .pipe(Effect.mapError(threadFailure(captain.threadId)));
+    return Option.isSome(project) ? project.value.workspaceRoot : undefined;
+  });
+
+  const crewWorktree = Effect.fn("CaptainService.crewWorktree")(function* (order: CaptainOrder) {
+    const shell = order.threadId === null ? null : yield* getShell(order.threadId);
+    const worktree = shell?.worktreePath;
+    if (worktree == null) return undefined;
+    const present = yield* fileSystem.exists(worktree).pipe(Effect.orElseSucceed(() => false));
+    return present ? worktree : undefined;
+  });
+
+  const checkOrder = Effect.fn("CaptainService.checkOrder")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    cwd: string,
+  ) {
+    if (order.doneCheck === null) return undefined;
+    return yield* runDoneCheck({
+      cmd: order.doneCheck,
+      cwd,
+      timeoutMs: (captain.charter.verifyTimeoutMinutes ?? 10) * 60_000,
+    }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner));
+  });
+
+  const guardWorktree = Effect.fn("CaptainService.guardWorktree")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+  ) {
+    const worktree = yield* crewWorktree(order);
+    const projectCwd = yield* projectCwdOf(captain);
+    if (worktree === undefined || projectCwd === undefined) return;
+    yield* installCrewHooks({
+      git,
+      hooksDir: path.join(config.baseDir, "captains", captain.projectId, "hooks"),
+      projectCwd,
+      worktreePath: worktree,
+      baseBranch: yield* landGit.baseBranch(projectCwd),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+  });
+
+  const stopThread = (
+    captain: Captain,
+    order: CaptainOrder,
+    threadId: ThreadId,
+    reason: string,
+    holdQueue: boolean,
+  ) =>
+    threads
+      .interruptThread({
+        projectId: captain.projectId,
+        commandId: CommandId.make(`mcp:captain-stop:${threadId}:${order.id}:${order.retries}`),
+        threadId,
+        reason,
+      })
+      .pipe(
+        Effect.andThen(
+          holdQueue
+            ? dispatch(threadId, {
+                type: "queue.hold",
+                commandId: CommandId.make(`server:captain-stop-hold:${threadId}:${order.id}`),
+                threadId,
+              })
+            : Effect.void,
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning("stopping an order's thread failed", {
+            orderId: order.id,
+            cause: error,
+          }),
+        ),
+      );
+
+  const cleanupWorktree = Effect.fn("CaptainService.cleanupWorktree")(
+    function* (captain: Captain, order: CaptainOrder, deleteBranch: boolean) {
+      const cwd = yield* projectCwdOf(captain);
+      if (cwd === undefined) return;
+      const worktree = yield* crewWorktree(order);
+      if (worktree !== undefined) {
+        yield* git.removeWorktree({ cwd, path: worktree, force: false }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("removing a crew worktree failed", {
+              orderId: order.id,
+              cause: error,
+            }),
+          ),
+        );
+      }
+      if (deleteBranch && order.branch !== null) {
+        yield* git.deleteLocalBranch({ cwd, refName: order.branch, force: false }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("deleting a merged crew branch failed", {
+              orderId: order.id,
+              cause: error,
+            }),
+          ),
+        );
+      }
+    },
+    (effect, _captain, order) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause as Cause.Cause<never>)
+            : Effect.logWarning("cleaning up a crew worktree failed", {
+                orderId: order.id,
+                cause,
+              }),
+        ),
+      ),
+  );
+
+  const projectLock = (projectId: ProjectId) => {
+    const existing = projectLocks.get(projectId);
+    if (existing !== undefined) return existing;
+    const created = Semaphore.makeUnsafe(1);
+    projectLocks.set(projectId, created);
+    return created;
+  };
+
+  const landFailed = Effect.fn("CaptainService.landFailed")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    action: "branch" | "pr" | "merge",
+    error: string,
+  ) {
+    const at = yield* nowIso;
+    const moved = yield* store.patchOrder({
+      orderId: order.id,
+      from: ["landing"],
+      at,
+      state: "land_failed",
+      land: { action, ok: false, error, at },
+    });
+    if (moved)
+      yield* note(captain, order, `land:${order.id}:${at}:failed`, `land failed: ${error}`);
+    return false;
+  });
+
+  const landSucceeded = Effect.fn("CaptainService.landSucceeded")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    action: "branch" | "pr" | "merge",
+    line: string,
+    prUrl?: string,
+  ) {
+    const at = yield* nowIso;
+    const moved = yield* store.patchOrder({
+      orderId: order.id,
+      from: ["landing"],
+      at,
+      state: "landed",
+      land: { action, ok: true, at, ...(prUrl === undefined ? {} : { prUrl }) },
+      ...(prUrl === undefined ? {} : { prUrl }),
+    });
+    if (moved) yield* note(captain, order, `land:${order.id}:${at}:landed`, line);
+    return moved;
+  });
+
+  const sendBackRebase = Effect.fn("CaptainService.sendBackRebase")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    from: ReadonlyArray<CaptainOrder["state"]>,
+    message: string,
+  ) {
+    const at = yield* nowIso;
+    const retries = order.retries + 1;
+    const exhausted = retries > captain.charter.retryLimit;
+    const moved = yield* store.patchOrder({
+      orderId: order.id,
+      from,
+      at,
+      state: "verify_failed",
+      retries,
+      pendingFollowUp: exhausted ? null : message,
+    });
+    if (!moved) return false;
+    if (exhausted) {
+      yield* note(
+        captain,
+        order,
+        `rebase:${order.id}:${retries}:limit`,
+        `rebase conflicted ${times(retries)}, needs you`,
+      );
+      yield* retryLimitEscalation(captain, order, `rebase conflicted ${times(retries)}`, message);
+      return false;
+    }
+    yield* settleFailedGate(
+      captain,
+      { ...order, retries, pendingFollowUp: message },
+      "rebase conflicted, sent back",
+    );
+    return false;
+  });
+
+  const rebaseAccepted = Effect.fn("CaptainService.rebaseAccepted")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    base: string,
+  ) {
+    const worktree = yield* crewWorktree(order);
+    if (worktree === undefined) return;
+    if ((yield* landGit.currentBranch(worktree)) !== order.branch) return;
+    const rebase = yield* landGit.rebaseOnto(worktree, base);
+    if (rebase.kind === "up_to_date") return;
+    if (rebase.kind === "conflict") {
+      yield* sendBackRebase(
+        captain,
+        order,
+        ["accepted"],
+        rebaseConflictMessage(base, rebase.files),
+      );
+      return;
+    }
+    if (rebase.kind === "error") {
+      yield* sendBackRebase(
+        captain,
+        order,
+        ["accepted"],
+        rebaseFailedMessage(base, rebase.message),
+      );
+      return;
+    }
+    const at = yield* nowIso;
+    yield* note(
+      captain,
+      order,
+      `rebase:${order.id}:${at}`,
+      order.doneCheck === null ? `rebased onto ${base}` : `rebased onto ${base}, re-verifying`,
+    );
+    const verify = yield* checkOrder(captain, order, worktree);
+    if (verify === undefined) return;
+    if (verify.exit !== 0) {
+      yield* failVerification(captain, order, verify, ["accepted"]);
+      return;
+    }
+    yield* store.patchOrder({ orderId: order.id, from: ["accepted"], at: yield* nowIso, verify });
+  });
+
+  const rebaseOthers = Effect.fn("CaptainService.rebaseOthers")(function* (
+    landed: CaptainOrder,
+    projectId: ProjectId,
+    base: string,
+  ) {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const staleBefore = isoAt(nowMs - CLAIM_TTL_MS);
+    for (const captain of yield* store.listCaptains({ projectId })) {
+      if (captain.status !== "active") continue;
+      for (const order of yield* store.listOrders(captain.id)) {
+        if (
+          order.id === landed.id ||
+          order.state !== "accepted" ||
+          order.branch === null ||
+          order.threadId === null
+        ) {
+          continue;
+        }
+        const claimed = yield* store.claimWork({
+          orderId: order.id,
+          state: "accepted",
+          at: isoAt(nowMs),
+          staleBefore,
+        });
+        if (!claimed) continue;
+        yield* rebaseAccepted(captain, order, base).pipe(
+          Effect.ensuring(
+            nowIso.pipe(
+              Effect.flatMap((at) =>
+                store.patchOrder({
+                  orderId: order.id,
+                  from: ["accepted"],
+                  at,
+                  releaseClaim: true,
+                }),
+              ),
+              Effect.ignore,
+            ),
+          ),
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause as Cause.Cause<never>)
+              : Effect.logWarning("rebasing an accepted order failed", {
+                  orderId: order.id,
+                  cause,
+                }),
+          ),
+        );
+      }
+    }
+  });
+
+  const runMerge = Effect.fn("CaptainService.runMerge")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+  ) {
+    const projectCwd = yield* projectCwdOf(captain);
+    const branch = order.branch;
+    if (projectCwd === undefined || branch === null) {
+      return yield* landFailed(captain, order, "merge", "The order has no branch to merge.");
+    }
+    const worktree = yield* crewWorktree(order);
+    if (worktree === undefined) {
+      return yield* landFailed(
+        captain,
+        order,
+        "merge",
+        "The crew worktree is gone, so the branch cannot be rebased.",
+      );
+    }
+    const base = yield* landGit.baseBranch(projectCwd);
+    if (base === undefined) {
+      return yield* landFailed(captain, order, "merge", "The project has no base branch.");
+    }
+    const onBranch = yield* landGit.currentBranch(worktree);
+    if (onBranch !== branch) {
+      return yield* landFailed(
+        captain,
+        order,
+        "merge",
+        `The crew worktree is on ${onBranch ?? "a detached HEAD"}, not ${branch}.`,
+      );
+    }
+    for (let attempt = 0; attempt < LAND_RETRY_LIMIT; attempt++) {
+      const rebase = yield* landGit.rebaseOnto(worktree, base);
+      if (rebase.kind === "conflict") {
+        return yield* sendBackRebase(
+          captain,
+          order,
+          ["landing"],
+          rebaseConflictMessage(base, rebase.files),
+        );
+      }
+      if (rebase.kind === "error") {
+        return yield* landFailed(
+          captain,
+          order,
+          "merge",
+          `Rebase onto ${base} failed: ${rebase.message}`,
+        );
+      }
+      if (rebase.kind === "rebased") {
+        yield* note(
+          captain,
+          order,
+          `rebase:${order.id}:${yield* nowIso}`,
+          order.doneCheck === null ? `rebased onto ${base}` : `rebased onto ${base}, re-verifying`,
+        );
+      }
+      const verify = yield* checkOrder(captain, order, worktree);
+      if (verify !== undefined) {
+        if (verify.exit !== 0) return yield* failVerification(captain, order, verify, ["landing"]);
+        yield* store.patchOrder({
+          orderId: order.id,
+          from: ["landing"],
+          at: yield* nowIso,
+          verify,
+        });
+      }
+      const branchSha = yield* landGit.revision(projectCwd, `refs/heads/${branch}`);
+      if (branchSha === undefined) {
+        return yield* landFailed(captain, order, "merge", `The branch ${branch} does not exist.`);
+      }
+      const moved = yield* landGit.fastForwardBase({ cwd: projectCwd, base, branchSha });
+      if (moved.kind === "base_moved") continue;
+      if (moved.kind === "error") {
+        return yield* landFailed(captain, order, "merge", moved.message);
+      }
+      const line =
+        moved.kind === "ref"
+          ? `landed: merged ${branch} into ${base}; only the ref moved, because ${moved.reason}`
+          : `landed: merged ${branch} into ${base}`;
+      if (!(yield* landSucceeded(captain, order, "merge", line))) return false;
+      yield* cleanupWorktree(captain, order, true);
+      yield* rebaseOthers(order, captain.projectId, base);
+      return true;
+    }
+    return yield* landFailed(
+      captain,
+      order,
+      "merge",
+      `${base} kept moving while the branch was being rebased. Try again.`,
+    );
+  });
+
+  const openPullRequest = Effect.fn("CaptainService.openPullRequest")(function* (input: {
+    readonly captain: Captain;
+    readonly order: CaptainOrder;
+    readonly cwd: string;
+    readonly branch: string;
+    readonly base: string;
+  }) {
+    const provider = yield* sourceControl.resolve({ cwd: input.cwd });
+    const findOpen = () =>
+      provider
+        .listChangeRequests({
+          cwd: input.cwd,
+          headSelector: input.branch,
+          state: "open",
+          limit: 10,
+        })
+        .pipe(
+          Effect.map((requests) =>
+            requests.find((request) => request.headRefName === input.branch),
+          ),
+        );
+    const existing = yield* findOpen();
+    if (existing !== undefined) return existing.url;
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "baton-pr-" });
+        const bodyFile = path.join(directory, "body.md");
+        yield* fileSystem.writeFileString(
+          bodyFile,
+          pullRequestBody({
+            captainName: input.captain.name,
+            orderId: input.order.id,
+            brief: input.order.brief,
+            summary: input.order.lastReport?.summary,
+            reviewer: input.order.review?.model.model,
+          }),
+        );
+        yield* provider.createChangeRequest({
+          cwd: input.cwd,
+          baseRefName: input.base,
+          headSelector: input.branch,
+          title: input.order.title,
+          bodyFile,
+        });
+      }),
+    );
+    return (yield* findOpen())?.url;
+  });
+
+  const watchPullRequest = Effect.fn("CaptainService.watchPullRequest")(function* (
+    order: CaptainOrder,
+    url: string,
+  ) {
+    const link = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
+    if (order.threadId === null || link === undefined) return;
+    yield* dispatch(order.threadId, {
+      type: "thread.pull-request.watch",
+      commandId: CommandId.make(`server:captain-pr-watch:${order.id}:${link.number}`),
+      threadId: order.threadId,
+      host: link.host,
+      repository: link.repository,
+      number: link.number,
+      watching: true,
+      link: { url, source: "created" },
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("watching a crew pull request failed", {
+          orderId: order.id,
+          cause: error,
+        }),
+      ),
+    );
+  });
+
+  const runBranchLand = Effect.fn("CaptainService.runBranchLand")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    openPr: boolean,
+  ) {
+    const action = openPr ? "pr" : "branch";
+    const projectCwd = yield* projectCwdOf(captain);
+    const branch = order.branch;
+    if (projectCwd === undefined || branch === null) {
+      return yield* landFailed(captain, order, action, "The order has no branch to push.");
+    }
+    const remote = yield* git.resolvePrimaryRemoteName(projectCwd).pipe(Effect.option);
+    if (Option.isNone(remote)) {
+      if (openPr) {
+        return yield* landFailed(
+          captain,
+          order,
+          action,
+          "No git remote is configured, so no pull request can be opened.",
+        );
+      }
+      return yield* landSucceeded(
+        captain,
+        order,
+        "branch",
+        `landed: kept ${branch} local, no remote`,
+      );
+    }
+    const pushCwd = (yield* crewWorktree(order)) ?? projectCwd;
+    const pushed = yield* landGit.pushBranch({ cwd: pushCwd, remote: remote.value, branch });
+    if (pushed.kind === "error") {
+      return yield* landFailed(captain, order, action, `Push failed: ${pushed.message}`);
+    }
+    if (!openPr) return yield* landSucceeded(captain, order, "branch", `landed: pushed ${branch}`);
+    const base = (yield* landGit.baseBranch(projectCwd)) ?? "main";
+    const opened = yield* openPullRequest({
+      captain,
+      order,
+      cwd: projectCwd,
+      branch,
+      base,
+    }).pipe(Effect.result);
+    if (opened._tag === "Failure") {
+      return yield* landFailed(
+        captain,
+        order,
+        action,
+        `Pull request failed: ${clipError(opened.failure.message)}`,
+      );
+    }
+    const url = opened.success;
+    if (url === undefined) {
+      return yield* landFailed(
+        captain,
+        order,
+        action,
+        "Pull request failed: it was created but could not be found afterwards.",
+      );
+    }
+    const landed = yield* landSucceeded(captain, order, "pr", `landed: PR ${url}`, url);
+    if (landed) yield* watchPullRequest(order, url);
+    return landed;
+  });
+
+  const runLand = Effect.fn("CaptainService.runLand")(function* (
+    captain: Captain,
+    claimed: CaptainOrder,
+  ) {
+    yield* projectLock(captain.projectId)
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const found = yield* store.getOrder(claimed.id);
+          if (Option.isNone(found) || found.value.state !== "landing") return;
+          const order = found.value;
+          yield* note(captain, order, `land:${order.id}:${order.updatedAt}:landing`, "landing");
+          if (order.delivery === "merge") {
+            yield* runMerge(captain, order);
+          } else if (order.delivery === "none") {
+            yield* store.patchOrder({
+              orderId: order.id,
+              from: ["landing"],
+              at: yield* nowIso,
+              state: "accepted",
+            });
+          } else {
+            yield* runBranchLand(captain, order, order.delivery === "pr");
+          }
+        }),
+      )
+      .pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("landing an order failed", { orderId: claimed.id, cause }).pipe(
+              Effect.andThen(
+                landFailed(
+                  captain,
+                  claimed,
+                  claimed.delivery === "none" ? "branch" : claimed.delivery,
+                  clipError(Cause.pretty(cause)).slice(0, 300),
+                ),
+              ),
+            ),
+        ),
+      );
+    yield* kick;
+  });
+
+  const beginLanding = Effect.fn("CaptainService.beginLanding")(function* (
+    order: CaptainOrder,
+    delivery: CaptainOrderDelivery,
+    from: ReadonlyArray<CaptainOrder["state"]>,
+  ) {
+    const moved = yield* store.patchOrder({
+      orderId: order.id,
+      from,
+      at: yield* nowIso,
+      state: "landing",
+      delivery,
+      land: null,
+    });
+    if (moved) yield* due.invalidate;
+    return moved;
+  });
+
+  const openMergeApproval = Effect.fn("CaptainService.openMergeApproval")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+    wake: boolean,
+  ) {
+    const projectCwd = yield* projectCwdOf(captain);
+    const base = projectCwd === undefined ? undefined : yield* landGit.baseBranch(projectCwd);
+    const target = base ?? "the base branch";
+    return yield* openEscalation({
+      captainId: captain.id,
+      orderId: order.id,
+      kind: "approval",
+      summary: `Merge ${order.title} into ${target}?`,
+      detail: `Branch ${order.branch ?? "(none)"}. ${
+        order.review === null
+          ? "It was not reviewed."
+          : `Reviewed by ${order.review.model.model}: ${order.review.verdict}.`
+      } Merging rebases the branch onto ${target}, re-runs the done-check, then fast-forwards ${target}.`,
+      options: ["merge", "hold"],
+      requestId: mergeApprovalKey(order),
+      wake,
+    });
+  });
+
+  const ensureMergeApproval = Effect.fn("CaptainService.ensureMergeApproval")(function* (
+    captain: Captain,
+    order: CaptainOrder,
+  ) {
+    const key = mergeApprovalKey(order);
+    const known = yield* store.listEscalations({ captainId: captain.id });
+    if (known.some((escalation) => escalation.requestId === key)) return;
+    yield* openMergeApproval(captain, order, true);
+  });
+
+  const withdrawMergeApprovals = Effect.fn("CaptainService.withdrawMergeApprovals")(function* (
+    order: CaptainOrder,
+    resolution: string,
+  ) {
+    const open = yield* store.listEscalations({ captainId: order.captainId, status: "open" });
+    const at = yield* nowIso;
+    for (const escalation of open) {
+      if (escalation.orderId === order.id && isMergeApproval(escalation)) {
+        yield* store.resolveEscalation({ id: escalation.id, resolution, at });
+      }
+    }
   });
 
   const trackWork = Effect.fn("CaptainService.trackWork")(function* <E>(
@@ -933,6 +1665,20 @@ const make = Effect.gen(function* () {
       const captain = yield* captainOf(order);
       if (Option.isNone(captain) || !(yield* claim(order))) continue;
       yield* trackWork(order.id, launchReviewer(captain.value, order));
+    }
+    for (const order of yield* store.listUnclaimed({ state: "accepted", staleBefore })) {
+      const captain = yield* captainOf(order);
+      if (Option.isNone(captain)) continue;
+      if (order.delivery === "branch" || order.delivery === "pr") {
+        yield* beginLanding(order, order.delivery, ["accepted"]);
+      } else if (order.delivery === "merge") {
+        yield* ensureMergeApproval(captain.value, order);
+      }
+    }
+    for (const order of yield* store.listUnclaimed({ state: "landing", staleBefore })) {
+      const captain = yield* captainOf(order);
+      if (Option.isNone(captain) || !(yield* claim(order))) continue;
+      yield* trackWork(order.id, runLand(captain.value, order));
     }
     for (const order of yield* store.listUnclaimed({ state: "verify_failed", staleBefore })) {
       const captain = yield* captainOf(order);
@@ -1220,6 +1966,8 @@ const make = Effect.gen(function* () {
       lastReport: null,
       verify: null,
       review: null,
+      land: null,
+      prUrl: null,
       pendingFollowUp: null,
       stallLevel: 0,
       createdAt: at,
@@ -1362,14 +2110,14 @@ const make = Effect.gen(function* () {
   )(function* ({ captain, orderId, brief }) {
     const order = yield* ownedOrder(captain, orderId);
     if (
-      !WORK_STATES.includes(order.state as (typeof WORK_STATES)[number]) ||
+      !RETRY_STATES.includes(order.state as (typeof RETRY_STATES)[number]) ||
       order.threadId === null
     ) {
       return yield* new CaptainError({
         reason: "invalid_state",
         captainId: captain.id,
         orderId,
-        detail: `It is ${order.state}; only an order with a crew at work, under check or under review can be retried.`,
+        detail: `It is ${order.state}; only an order with a crew at work, under check, under review, accepted or failed to land can be retried.`,
       });
     }
     const crewThreadId = order.threadId;
@@ -1377,18 +2125,20 @@ const make = Effect.gen(function* () {
     const retries = order.retries + 1;
     const moved = yield* store.patchOrder({
       orderId,
-      from: WORK_STATES,
+      from: RETRY_STATES,
       at,
       state: "running",
       retries,
       pendingFollowUp: null,
       stallLevel: 0,
+      land: null,
     });
     if (!moved) {
       return yield* new CaptainError({ reason: "invalid_state", captainId: captain.id, orderId });
     }
     yield* store.touchActivity({ orderId, at });
     yield* cancelWork(orderId);
+    yield* withdrawMergeApprovals(order, "withdrawn: the order was retried");
     if (order.review !== null && order.review.finishedAt === null) {
       yield* clearRole(order.review.threadId);
       yield* threads
@@ -1415,63 +2165,272 @@ const make = Effect.gen(function* () {
       "queue",
     );
     yield* due.invalidate;
-    return { ...order, state: "running", retries, pendingFollowUp: null, updatedAt: at };
+    return {
+      ...order,
+      state: "running",
+      retries,
+      pendingFollowUp: null,
+      land: null,
+      updatedAt: at,
+    };
   });
 
   const dropOrder: CaptainService["Service"]["dropOrder"] = Effect.fn("CaptainService.dropOrder")(
     function* ({ captain, orderId, reason }) {
       const order = yield* ownedOrder(captain, orderId);
       if (order.state === "dropped") return order;
-      if (order.state === "done" || order.state === "accepted") {
+      if (!DROP_STATES.includes(order.state as (typeof DROP_STATES)[number])) {
         return yield* new CaptainError({
           reason: "invalid_order",
           captainId: captain.id,
           orderId,
-          detail: "A finished order cannot be dropped.",
+          detail:
+            order.state === "landing"
+              ? "It is landing right now. Wait for it to land or fail."
+              : "A finished or landed order cannot be dropped.",
         });
       }
       const at = yield* nowIso;
-      yield* store.transitionOrder({
+      const dropped = yield* store.transitionOrder({
         orderId,
-        from: ["queued", "running", "verifying", "verify_failed", "reviewing"],
+        from: DROP_STATES,
         to: "dropped",
         at,
       });
+      if (!dropped) {
+        return yield* new CaptainError({ reason: "invalid_state", captainId: captain.id, orderId });
+      }
       yield* cancelWork(orderId);
-      const stop = (threadId: ThreadId) =>
-        threads
-          .interruptThread({
-            projectId: captain.projectId,
-            commandId: CommandId.make(`mcp:captain-drop:${threadId}:${orderId}`),
-            threadId,
-            reason,
-          })
-          .pipe(
-            Effect.andThen(
-              dispatch(threadId, {
-                type: "queue.hold",
-                commandId: CommandId.make(`server:captain-drop-hold:${threadId}:${orderId}`),
-                threadId,
-              }),
-            ),
-            Effect.catch((error) =>
-              Effect.logWarning("stopping a dropped order's thread failed", {
-                orderId,
-                cause: error,
-              }),
-            ),
-          );
+      yield* withdrawMergeApprovals(order, "withdrawn: the order was dropped");
       if (order.review !== null && order.review.finishedAt === null) {
         yield* clearRole(order.review.threadId);
-        yield* stop(order.review.threadId);
+        yield* stopThread(captain, order, order.review.threadId, reason, true);
       }
       if (order.threadId !== null) {
         yield* clearRole(order.threadId);
-        yield* stop(order.threadId);
+        yield* stopThread(captain, order, order.threadId, reason, true);
+        yield* cleanupWorktree(captain, order, false);
       }
       yield* due.invalidate;
       yield* admitNow(captain);
       return { ...order, state: "dropped", updatedAt: at } satisfies CaptainOrder;
+    },
+  );
+
+  const landOrder: CaptainService["Service"]["landOrder"] = Effect.fn("CaptainService.landOrder")(
+    function* ({ captain, orderId, delivery, approved }) {
+      if (captain.status !== "active") {
+        return yield* new CaptainError({
+          reason: "captain_not_active",
+          captainId: captain.id,
+          threadId: captain.threadId,
+        });
+      }
+      const order = yield* ownedOrder(captain, orderId);
+      if (order.state !== "accepted" && order.state !== "land_failed") {
+        return yield* new CaptainError({
+          reason: "invalid_state",
+          captainId: captain.id,
+          orderId,
+          detail: `It is ${order.state}; only an accepted order, or one that failed to land, can be landed.`,
+        });
+      }
+      const effective = delivery ?? order.delivery;
+      const from = [order.state] as const;
+      if (effective === "none") {
+        yield* store.patchOrder({
+          orderId,
+          from,
+          at: yield* nowIso,
+          state: "accepted",
+          delivery: "none",
+          land: null,
+        });
+        return {
+          order: { ...order, state: "accepted", delivery: "none", land: null },
+          needsApproval: false,
+        };
+      }
+      if (effective === "merge" && !approved) {
+        if (order.delivery !== "merge") {
+          yield* store.patchOrder({ orderId, from, at: yield* nowIso, delivery: "merge" });
+        }
+        yield* openMergeApproval(captain, { ...order, delivery: "merge" }, false);
+        return { order: { ...order, delivery: "merge" }, needsApproval: true };
+      }
+      const moved = yield* beginLanding(order, effective, from);
+      if (!moved) {
+        return yield* new CaptainError({ reason: "invalid_state", captainId: captain.id, orderId });
+      }
+      if (approved) yield* withdrawMergeApprovals(order, "merge");
+      yield* kick;
+      return {
+        order: { ...order, state: "landing", delivery: effective, land: null },
+        needsApproval: false,
+      };
+    },
+  );
+
+  const listOrdersOf: CaptainService["Service"]["listOrdersOf"] = Effect.fn(
+    "CaptainService.listOrdersOf",
+  )(function* (captainId) {
+    const found = yield* store.getCaptain(captainId);
+    if (Option.isNone(found))
+      return yield* new CaptainError({ reason: "captain_not_found", captainId });
+    return yield* store.listOrders(captainId);
+  });
+
+  const captainOfOrder = Effect.fn("CaptainService.captainOfOrder")(function* (
+    orderId: CaptainOrderId,
+  ) {
+    const order = yield* store.getOrder(orderId);
+    if (Option.isNone(order))
+      return yield* new CaptainError({ reason: "order_not_found", orderId });
+    const captain = yield* store.getCaptain(order.value.captainId);
+    if (Option.isNone(captain) || captain.value.status === "released") {
+      return yield* new CaptainError({
+        reason: "captain_not_found",
+        captainId: order.value.captainId,
+        orderId,
+      });
+    }
+    return captain.value;
+  });
+
+  const landOrderById: CaptainService["Service"]["landOrderById"] = Effect.fn(
+    "CaptainService.landOrderById",
+  )(function* ({ orderId, delivery }) {
+    const captain = yield* captainOfOrder(orderId);
+    const { order } = yield* landOrder({ captain, orderId, delivery, approved: true });
+    return order;
+  });
+
+  const retryOrderById: CaptainService["Service"]["retryOrderById"] = Effect.fn(
+    "CaptainService.retryOrderById",
+  )(function* ({ orderId, brief }) {
+    const captain = yield* captainOfOrder(orderId);
+    return yield* retryOrder({ captain, orderId, brief });
+  });
+
+  const dropOrderById: CaptainService["Service"]["dropOrderById"] = Effect.fn(
+    "CaptainService.dropOrderById",
+  )(function* ({ orderId, reason }) {
+    const captain = yield* captainOfOrder(orderId);
+    return yield* dropOrder({ captain, orderId, reason: reason ?? "Dropped by the user." });
+  });
+
+  const mergeCharter = Effect.fn("CaptainService.mergeCharter")(function* (
+    captain: Captain,
+    patch: CaptainCharterPatch,
+  ) {
+    const invalid = (detail: string) =>
+      new CaptainError({ reason: "invalid_charter", captainId: captain.id, detail });
+    const merged: Record<string, unknown> = { ...captain.charter };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null) delete merged[key];
+      else if (value !== undefined) merged[key] = value;
+    }
+    const charter = yield* decodeCharter(merged).pipe(
+      Effect.mapError((error) => invalid(clipError(error.message))),
+    );
+    const captainShell = yield* getShell(captain.threadId);
+    if (
+      captainShell !== null &&
+      runtimeModeRank(charter.crewRuntimeMode) > runtimeModeRank(captainShell.runtimeMode)
+    ) {
+      return yield* invalid(
+        `Crew would run at ${charter.crewRuntimeMode}, above this captain's ${captainShell.runtimeMode}.`,
+      );
+    }
+    const providers = yield* providerRegistry.getProviders;
+    for (const key of ["reviewModel", "defaultModel"] as const) {
+      const model = charter[key];
+      if (
+        model !== undefined &&
+        !providers.some((entry) => entry.instanceId === model.instanceId && entry.enabled)
+      ) {
+        return yield* invalid(`${key} names a provider instance that is not available.`);
+      }
+    }
+    return charter;
+  });
+
+  const update: CaptainService["Service"]["update"] = Effect.fn("CaptainService.update")(
+    function* (input) {
+      const found = yield* store.getCaptain(input.captainId);
+      if (Option.isNone(found)) {
+        return yield* new CaptainError({ reason: "captain_not_found", captainId: input.captainId });
+      }
+      let captain = found.value;
+      if (captain.status === "released") {
+        return yield* new CaptainError({
+          reason: "invalid_state",
+          captainId: captain.id,
+          detail: "A released captain cannot be updated. Make the thread a captain again.",
+        });
+      }
+      if (input.charter !== undefined) {
+        const charter = yield* mergeCharter(captain, input.charter);
+        const at = yield* nowIso;
+        yield* store.setCaptainCharter({ captainId: captain.id, charter, at });
+        captain = { ...captain, charter, updatedAt: at };
+      }
+      if (input.status !== undefined && input.status !== captain.status) {
+        const at = yield* nowIso;
+        yield* store.setCaptainStatus({ captainId: captain.id, status: input.status, at });
+        captain = { ...captain, status: input.status, updatedAt: at };
+        if (input.status === "paused") {
+          yield* dispatch(captain.threadId, {
+            type: "queue.hold",
+            commandId: CommandId.make(`server:captain-pause:${yield* newId}`),
+            threadId: captain.threadId,
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("holding a paused captain's queue failed", {
+                captainId: captain.id,
+                cause: error,
+              }),
+            ),
+          );
+          for (const order of yield* store.listOrders(captain.id)) {
+            if (order.state === "running" && order.threadId !== null) {
+              yield* threads
+                .interruptThread({
+                  projectId: captain.projectId,
+                  commandId: CommandId.make(`server:captain-pause-stop:${yield* newId}`),
+                  threadId: order.threadId,
+                  reason: "The captain was paused.",
+                })
+                .pipe(Effect.ignore);
+            }
+          }
+        } else {
+          yield* dispatch(captain.threadId, {
+            type: "queue.resume",
+            commandId: CommandId.make(`server:captain-resume:${yield* newId}`),
+            threadId: captain.threadId,
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("resuming a captain's queue failed", {
+                captainId: captain.id,
+                cause: error,
+              }),
+            ),
+          );
+          for (const order of yield* store.listOrders(captain.id)) {
+            if (order.state !== "running" || order.threadId === null) continue;
+            const shell = yield* getShell(order.threadId);
+            if (shell !== null && shell.activeRunId === null) {
+              yield* sendFollowUp(captain, order, RESUME_NUDGE, `resume:${order.id}:${at}`).pipe(
+                Effect.ignore,
+              );
+            }
+          }
+        }
+      }
+      yield* due.invalidate;
+      if (captain.status === "active") yield* admitNow(captain);
+      return captain;
     },
   );
 
@@ -1669,7 +2628,18 @@ const make = Effect.gen(function* () {
         detail: "It is already resolved.",
       });
     }
-    if (escalation.kind === "approval" && escalation.requestId !== null) {
+    if (isMergeApproval(escalation) && mergeDecision(resolution) === undefined) {
+      return yield* new CaptainError({
+        reason: "invalid_state",
+        captainId: escalation.captainId,
+        detail: "Resolve a merge approval with merge or hold.",
+      });
+    }
+    if (
+      escalation.kind === "approval" &&
+      escalation.requestId !== null &&
+      !isMergeApproval(escalation)
+    ) {
       const decision = approvalDecision(resolution);
       if (decision === undefined) {
         return yield* new CaptainError({
@@ -1709,6 +2679,14 @@ const make = Effect.gen(function* () {
           `resolved:${escalation.id}`,
           `you resolved: ${escalation.summary} → ${resolution}`,
         );
+        if (
+          isMergeApproval(escalation) &&
+          mergeDecision(resolution) === "merge" &&
+          Option.isSome(order) &&
+          (order.value.state === "accepted" || order.value.state === "land_failed")
+        ) {
+          if (yield* beginLanding(order.value, "merge", [order.value.state])) yield* kick;
+        }
       }
     }
     return settled;
@@ -1764,6 +2742,12 @@ const make = Effect.gen(function* () {
     answerOrder,
     retryOrder,
     dropOrder,
+    landOrder,
+    listOrdersOf,
+    landOrderById,
+    retryOrderById,
+    dropOrderById,
+    update,
     crewReport,
     submitReview,
     reviewerEnded,

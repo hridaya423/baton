@@ -48,6 +48,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -300,6 +301,9 @@ const makeLayer = () => {
         revision === "main"
           ? Effect.succeed({ commitSha: baseSha })
           : Effect.fail(new Error("no ref") as never),
+    }),
+    Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+      resolveLink: () => Effect.die("unused"),
     }),
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(environmentId),
@@ -706,7 +710,10 @@ it.effect(
         verifying: 0,
         verify_failed: 0,
         reviewing: 0,
-        accepted: 2,
+        accepted: 0,
+        landing: 0,
+        landed: 2,
+        land_failed: 0,
         done: 1,
         dropped: 0,
       });

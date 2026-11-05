@@ -33,7 +33,13 @@ const HOLDS_FILES: ReadonlySet<Planned["state"]> = new Set([
   "reviewing",
 ]);
 
-const SATISFIES_DEPENDENCY: ReadonlySet<Planned["state"]> = new Set(["done", "accepted"]);
+export const SATISFIES_DEPENDENCY: ReadonlySet<Planned["state"]> = new Set([
+  "done",
+  "accepted",
+  "landing",
+  "landed",
+  "land_failed",
+]);
 
 /** Only a crew at work takes a slot of the crew cap. */
 export const selectAdmissions = (input: {

@@ -64,3 +64,24 @@ export const reviewerBrief = (input: {
       : [`The repository's AGENTS.md:\n${input.agentsMd.slice(0, AGENTS_MD_MAX_CHARS)}`]),
     "Review for correctness bugs, regressions against the brief, and violations of AGENTS.md. Give a file, a line if you know it, and the scenario that breaks for each problem. Do not change any file. End by calling review_submit once: verdict approve, or reject with your findings.",
   ].join("\n\n");
+
+export const rebaseConflictMessage = (base: string, files: ReadonlyArray<string>) =>
+  `Rebase onto ${base} conflicted in: ${files.join(", ")}. Resolve it and call crew_report done again.`;
+
+export const rebaseFailedMessage = (base: string, reason: string) =>
+  `Rebase onto ${base} failed: ${reason}. Resolve it and call crew_report done again.`;
+
+export const pullRequestBody = (input: {
+  readonly captainName: string;
+  readonly orderId: string;
+  readonly brief: string;
+  readonly summary: string | undefined;
+  readonly reviewer: string | undefined;
+}) =>
+  [
+    input.summary === undefined ? undefined : `## Summary\n${input.summary}`,
+    `## Brief\n${input.brief}`,
+    `Opened by captain "${input.captainName}" for order ${input.orderId}${input.reviewer === undefined ? "" : `, reviewed by ${input.reviewer}`}.`,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join("\n\n");

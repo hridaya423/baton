@@ -84,10 +84,13 @@ const make = Effect.gen(function* () {
   const boardLine = (orders: ReadonlyArray<CaptainOrder>) => {
     const count = (state: CaptainOrder["state"]) =>
       orders.filter((order) => order.state === state).length;
-    const extra = (["verifying", "verify_failed", "reviewing", "accepted"] as const).flatMap(
-      (state) => (count(state) === 0 ? [] : [`${count(state)} ${state.replace("_", " ")}`]),
+    const extra = (
+      ["verifying", "verify_failed", "reviewing", "accepted", "landing", "land_failed"] as const
+    ).flatMap((state) =>
+      count(state) === 0 ? [] : [`${count(state)} ${state.replace("_", " ")}`],
     );
-    return `Board: ${[`${count("queued")} queued`, `${count("running")} running`, ...extra, `${count("done")} done`].join(", ")}.`;
+    const landed = count("landed") === 0 ? [] : [`${count("landed")} landed`];
+    return `Board: ${[`${count("queued")} queued`, `${count("running")} running`, ...extra, ...landed, `${count("done")} done`].join(", ")}.`;
   };
 
   const flush = Effect.fn("CaptainReactor.flush")(function* (captainId: CaptainId) {
@@ -177,6 +180,7 @@ const make = Effect.gen(function* () {
       if (!["completed", "failed", "interrupted", "cancelled"].includes(run.status)) return;
       const key = `run:${run.id}:${run.status}`;
       if (run.status === "completed") {
+        if (order.state === "landing" || order.state === "landed") return;
         const startedAt = DateTime.toEpochMillis(run.startedAt ?? run.requestedAt);
         const reported = order.lastReport !== null && Date.parse(order.lastReport.at) >= startedAt;
         if (reported) return;
@@ -237,6 +241,23 @@ const make = Effect.gen(function* () {
         requestId: request.id,
         wake: true,
       });
+    }
+
+    if (
+      event.type === "thread.pull-request-link-updated" ||
+      event.type === "thread.pull-request-synced"
+    ) {
+      if (order.state !== "landed" || order.prUrl === null) return;
+      const links =
+        event.type === "thread.pull-request-link-updated"
+          ? [event.payload]
+          : (event.payload.pullRequests ?? []);
+      for (const link of links) {
+        const state = link.snapshot?.state;
+        if (link.url !== order.prUrl || (state !== "merged" && state !== "closed")) continue;
+        yield* wake(`pr:${order.id}:${state}`, Effect.succeed(`PR ${state}: ${link.url}`));
+      }
+      return;
     }
 
     if (

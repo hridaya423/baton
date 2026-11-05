@@ -2390,6 +2390,32 @@ export const layerWsRpc = (
             Effect.andThen(captains.resolveEscalation(input)),
             Effect.map((escalation) => ({ escalation })),
           ),
+        [WS_METHODS.captainsOrdersList]: (input) =>
+          captains.listOrdersOf(input.captainId).pipe(Effect.map((orders) => ({ orders }))),
+        [WS_METHODS.captainsOrdersLand]: (input) =>
+          Effect.annotateCurrentSpan({ "captain.order.id": input.orderId }).pipe(
+            Effect.andThen(
+              captains.landOrderById({ orderId: input.orderId, delivery: input.delivery }),
+            ),
+            Effect.map((order) => ({ order })),
+          ),
+        [WS_METHODS.captainsOrdersRetry]: (input) =>
+          Effect.annotateCurrentSpan({ "captain.order.id": input.orderId }).pipe(
+            Effect.andThen(captains.retryOrderById({ orderId: input.orderId, brief: input.brief })),
+            Effect.map((order) => ({ order })),
+          ),
+        [WS_METHODS.captainsOrdersDrop]: (input) =>
+          Effect.annotateCurrentSpan({ "captain.order.id": input.orderId }).pipe(
+            Effect.andThen(
+              captains.dropOrderById({ orderId: input.orderId, reason: input.reason }),
+            ),
+            Effect.map((order) => ({ order })),
+          ),
+        [WS_METHODS.captainsUpdate]: (input) =>
+          Effect.annotateCurrentSpan({ "captain.id": input.captainId }).pipe(
+            Effect.andThen(captains.update(input)),
+            Effect.map((captain) => ({ captain })),
+          ),
         [WS_METHODS.captainsRelease]: (input) =>
           Effect.annotateCurrentSpan({ "captain.id": input.captainId }).pipe(
             Effect.andThen(captains.release(input.captainId)),

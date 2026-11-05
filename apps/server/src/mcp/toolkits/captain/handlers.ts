@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import * as CaptainService from "../../../captains/CaptainService.ts";
+import { SATISFIES_DEPENDENCY } from "../../../captains/OrderPlanner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readCaller } from "../../threadAccess.ts";
@@ -52,11 +53,15 @@ const summarize = (
   branch: order.branch,
   waitingOn:
     order.state === "queued"
-      ? order.dependsOn.filter((id) => orders.find((o) => o.id === id)?.state !== "done")
+      ? order.dependsOn.filter((id) => {
+          const state = orders.find((o) => o.id === id)?.state;
+          return state === undefined || !SATISFIES_DEPENDENCY.has(state);
+        })
       : [],
   lastReport: order.lastReport,
   verify: order.verify,
   review: order.review,
+  land: order.land,
   threadId: order.threadId,
   ...(order.threadId === null
     ? {}
@@ -110,6 +115,9 @@ export const layer = McpToolAccess.toLayer(CaptainToolkit, {
           verify_failed: count("verify_failed"),
           reviewing: count("reviewing"),
           accepted: count("accepted"),
+          landing: count("landing"),
+          landed: count("landed"),
+          land_failed: count("land_failed"),
           done: count("done"),
           dropped: count("dropped"),
         },
@@ -183,6 +191,25 @@ export const layer = McpToolAccess.toLayer(CaptainToolkit, {
         brief: input.brief,
       });
       return { orderId: order.id, state: order.state, retries: order.retries };
+    }).pipe(Effect.mapError(toFailure)),
+  ),
+  order_land: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { threadId } = yield* callerThread("order_land");
+      const captains = yield* CaptainService.CaptainService;
+      const captain = yield* captains.requireCaptain(threadId, { active: true });
+      const { order, needsApproval } = yield* captains.landOrder({
+        captain,
+        orderId: input.orderId,
+        delivery: input.delivery,
+        approved: false,
+      });
+      return {
+        orderId: order.id,
+        state: order.state,
+        delivery: order.delivery,
+        needsApproval,
+      };
     }).pipe(Effect.mapError(toFailure)),
   ),
   escalate: McpToolAccess.actsAsCaller((input) =>

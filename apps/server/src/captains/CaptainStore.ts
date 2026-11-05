@@ -7,6 +7,7 @@ import {
   type CaptainEscalationId,
   type CaptainEscalationKind,
   type CaptainEscalationStatus,
+  CaptainLandResult,
   CaptainOrder,
   CaptainOrderId,
   CaptainPlacement,
@@ -14,6 +15,7 @@ import {
   CaptainVerifyResult,
   type CaptainId,
   type CaptainListInput,
+  type CaptainOrderDelivery,
   type CaptainOrderState,
   type CaptainStatus,
   type ThreadId,
@@ -32,6 +34,7 @@ const PlacementJson = Schema.fromJsonString(CaptainPlacement);
 const ReportJson = Schema.fromJsonString(CaptainCrewReport);
 const VerifyJson = Schema.fromJsonString(CaptainVerifyResult);
 const ReviewJson = Schema.fromJsonString(CaptainReview);
+const LandJson = Schema.fromJsonString(CaptainLandResult);
 
 const encodeStringArray = Schema.encodeSync(StringArrayJson);
 const encodeOrderIds = Schema.encodeSync(OrderIdArrayJson);
@@ -40,6 +43,7 @@ const encodePlacement = Schema.encodeSync(PlacementJson);
 const encodeReport = Schema.encodeSync(ReportJson);
 const encodeVerify = Schema.encodeSync(VerifyJson);
 const encodeReview = Schema.encodeSync(ReviewJson);
+const encodeLand = Schema.encodeSync(LandJson);
 const decodeStringArray = Schema.decodeUnknownEffect(StringArrayJson);
 const decodeOrderIds = Schema.decodeUnknownEffect(OrderIdArrayJson);
 const decodeCharter = Schema.decodeUnknownEffect(CharterJson);
@@ -47,6 +51,7 @@ const decodePlacement = Schema.decodeUnknownEffect(PlacementJson);
 const decodeReport = Schema.decodeUnknownEffect(ReportJson);
 const decodeVerify = Schema.decodeUnknownEffect(VerifyJson);
 const decodeReview = Schema.decodeUnknownEffect(ReviewJson);
+const decodeLand = Schema.decodeUnknownEffect(LandJson);
 const decodeEscalation = Schema.decodeUnknownEffect(CaptainEscalation);
 const decodeCaptain = Schema.decodeUnknownEffect(Captain);
 const decodeOrder = Schema.decodeUnknownEffect(CaptainOrder);
@@ -82,6 +87,8 @@ interface OrderRow {
   readonly last_report_json: string | null;
   readonly verify_json: string | null;
   readonly review_json: string | null;
+  readonly land_json: string | null;
+  readonly pr_url: string | null;
   readonly followup_text: string | null;
   readonly stall_level: number;
   readonly created_at: string;
@@ -140,6 +147,8 @@ const orderFromRow = Effect.fnUntraced(function* (row: OrderRow) {
     lastReport: row.last_report_json === null ? null : yield* decodeReport(row.last_report_json),
     verify: row.verify_json === null ? null : yield* decodeVerify(row.verify_json),
     review: row.review_json === null ? null : yield* decodeReview(row.review_json),
+    land: row.land_json === null ? null : yield* decodeLand(row.land_json),
+    prUrl: row.pr_url,
     pendingFollowUp: row.followup_text,
     stallLevel: row.stall_level,
     createdAt: row.created_at,
@@ -196,9 +205,14 @@ export interface OrderPatch {
   readonly retries?: number;
   readonly verify?: CaptainVerifyResult | null;
   readonly review?: CaptainReview | null;
+  readonly land?: CaptainLandResult | null;
+  readonly prUrl?: string | null;
+  readonly delivery?: CaptainOrderDelivery;
   readonly stallLevel?: number;
   readonly pendingFollowUp?: string | null;
   readonly releaseClaim?: boolean;
+  /** With a state change, keep the hold on the order instead of dropping it. */
+  readonly keepClaim?: boolean;
 }
 
 export class CaptainStore extends Context.Service<
@@ -208,6 +222,11 @@ export class CaptainStore extends Context.Service<
     readonly setCaptainStatus: (input: {
       readonly captainId: CaptainId;
       readonly status: CaptainStatus;
+      readonly at: string;
+    }) => Effect.Effect<void, CaptainError>;
+    readonly setCaptainCharter: (input: {
+      readonly captainId: CaptainId;
+      readonly charter: CaptainCharter;
       readonly at: string;
     }) => Effect.Effect<void, CaptainError>;
     readonly getCaptain: (id: CaptainId) => Effect.Effect<Option.Option<Captain>, CaptainError>;
@@ -313,6 +332,17 @@ const make = Effect.gen(function* () {
   }) {
     yield* sql`
       UPDATE captains SET status = ${input.status}, updated_at = ${input.at}
+      WHERE captain_id = ${input.captainId}
+    `.pipe(storage);
+  });
+
+  const setCaptainCharter = Effect.fn("CaptainStore.setCaptainCharter")(function* (input: {
+    readonly captainId: CaptainId;
+    readonly charter: CaptainCharter;
+    readonly at: string;
+  }) {
+    yield* sql`
+      UPDATE captains SET charter_json = ${encodeCharter(input.charter)}, updated_at = ${input.at}
       WHERE captain_id = ${input.captainId}
     `.pipe(storage);
   });
@@ -456,9 +486,13 @@ const make = Effect.gen(function* () {
                              THEN ${input.verify == null ? null : encodeVerify(input.verify)} ELSE verify_json END,
           review_json = CASE WHEN ${flag(input.review !== undefined)} = 1
                              THEN ${input.review == null ? null : encodeReview(input.review)} ELSE review_json END,
+          land_json = CASE WHEN ${flag(input.land !== undefined)} = 1
+                           THEN ${input.land == null ? null : encodeLand(input.land)} ELSE land_json END,
+          pr_url = CASE WHEN ${flag(input.prUrl !== undefined)} = 1 THEN ${input.prUrl ?? null} ELSE pr_url END,
+          delivery = CASE WHEN ${flag(input.delivery !== undefined)} = 1 THEN ${input.delivery ?? ""} ELSE delivery END,
           stall_level = CASE WHEN ${flag(input.stallLevel !== undefined)} = 1 THEN ${input.stallLevel ?? 0} ELSE stall_level END,
           followup_text = CASE WHEN ${flag(input.pendingFollowUp !== undefined)} = 1 THEN ${input.pendingFollowUp ?? null} ELSE followup_text END,
-          claimed_at = CASE WHEN ${flag(input.state !== undefined || input.releaseClaim === true)} = 1 THEN NULL ELSE claimed_at END,
+          claimed_at = CASE WHEN ${flag((input.state !== undefined && input.keepClaim !== true) || input.releaseClaim === true)} = 1 THEN NULL ELSE claimed_at END,
           updated_at = ${input.at}
       WHERE order_id = ${input.orderId} AND state IN ${sql.in(input.from)}
       RETURNING order_id
@@ -603,6 +637,7 @@ const make = Effect.gen(function* () {
   return CaptainStore.of({
     insertCaptain,
     setCaptainStatus,
+    setCaptainCharter,
     getCaptain,
     getCaptainByThread,
     listCaptains,
