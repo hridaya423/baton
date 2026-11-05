@@ -285,6 +285,7 @@ export const make = Effect.gen(function* () {
       threadPinReorder: true,
       threadActiveReorder: true,
       threadGrouping: true,
+      captains: true,
       threadAutoSettleOptOut: true,
       threadProjectFromScratch: true,
       agentSessionImportProgress: true,

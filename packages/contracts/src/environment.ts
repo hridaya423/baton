@@ -123,6 +123,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server persists groupedUnderThreadId on thread.metadata.update. Older
       servers drop the field, so clients hide grouping actions. */
   threadGrouping: Schema.optionalKey(Schema.Boolean),
+  /** Serves captains.board.subscribe; clients leave captain features out where it is absent. */
+  captains: Schema.optionalKey(Schema.Boolean),
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
   threadProjectFromScratch: Schema.optionalKey(Schema.Boolean),
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
