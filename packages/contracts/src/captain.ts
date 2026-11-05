@@ -329,7 +329,10 @@ export const CaptainMcpOrderCreateInput = Schema.Struct({
     description: "change makes commits. report returns a write-up.",
   }),
   doneCheck: Schema.optional(
-    TrimmedNonEmptyString.annotate({ description: "Shell command that must exit 0." }),
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Only a shell command, run with sh -c in the crew worktree root. Done when it exits 0. No prose around it.",
+    }),
   ),
   touches: Schema.optional(
     Schema.Array(TrimmedNonEmptyString).annotate({
