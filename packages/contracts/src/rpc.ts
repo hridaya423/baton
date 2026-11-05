@@ -374,6 +374,10 @@ import {
   CaptainCreateInput,
   CaptainCreateResult,
   CaptainError,
+  CaptainEscalationsListInput,
+  CaptainEscalationsListResult,
+  CaptainEscalationsResolveInput,
+  CaptainEscalationsResolveResult,
   CaptainListInput,
   CaptainListResult,
   CaptainReleaseInput,
@@ -562,6 +566,8 @@ export const WS_METHODS = {
   captainsCreate: "captains.create",
   captainsList: "captains.list",
   captainsRelease: "captains.release",
+  captainsEscalationsList: "captains.escalations.list",
+  captainsEscalationsResolve: "captains.escalations.resolve",
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
@@ -2006,6 +2012,18 @@ const WsCaptainsReleaseRpc = Rpc.make(WS_METHODS.captainsRelease, {
   error: Schema.Union([CaptainError, EnvironmentAuthorizationError]),
 });
 
+const WsCaptainsEscalationsListRpc = Rpc.make(WS_METHODS.captainsEscalationsList, {
+  payload: CaptainEscalationsListInput,
+  success: CaptainEscalationsListResult,
+  error: Schema.Union([CaptainError, EnvironmentAuthorizationError]),
+});
+
+const WsCaptainsEscalationsResolveRpc = Rpc.make(WS_METHODS.captainsEscalationsResolve, {
+  payload: CaptainEscalationsResolveInput,
+  success: CaptainEscalationsResolveResult,
+  error: Schema.Union([CaptainError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2154,6 +2172,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsCaptainsCreateRpc,
   WsCaptainsListRpc,
   WsCaptainsReleaseRpc,
+  WsCaptainsEscalationsListRpc,
+  WsCaptainsEscalationsResolveRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

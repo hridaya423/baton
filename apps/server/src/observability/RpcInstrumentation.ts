@@ -93,6 +93,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.captainsCreate]: "captains",
   [WS_METHODS.captainsList]: "captains",
   [WS_METHODS.captainsRelease]: "captains",
+  [WS_METHODS.captainsEscalationsList]: "captains",
+  [WS_METHODS.captainsEscalationsResolve]: "captains",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",

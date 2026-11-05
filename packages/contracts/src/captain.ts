@@ -4,6 +4,7 @@ import {
   IsoDateTime,
   NonNegativeInt,
   ProjectId,
+  RuntimeRequestId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -26,7 +27,16 @@ export type CaptainOrderKind = typeof CaptainOrderKind.Type;
 export const CaptainOrderDelivery = Schema.Literals(["none", "branch", "pr", "merge"]);
 export type CaptainOrderDelivery = typeof CaptainOrderDelivery.Type;
 
-export const CaptainOrderState = Schema.Literals(["queued", "running", "done", "dropped"]);
+export const CaptainOrderState = Schema.Literals([
+  "queued",
+  "running",
+  "verifying",
+  "verify_failed",
+  "reviewing",
+  "accepted",
+  "done",
+  "dropped",
+]);
 export type CaptainOrderState = typeof CaptainOrderState.Type;
 
 export const CaptainCharter = Schema.Struct({
@@ -35,6 +45,9 @@ export const CaptainCharter = Schema.Struct({
   crewRuntimeMode: RuntimeMode,
   retryLimit: NonNegativeInt,
   stallMinutes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  verifyTimeoutMinutes: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(120)),
+  ),
   defaultModel: Schema.optional(ModelSelection),
   reviewModel: Schema.optional(ModelSelection),
 });
@@ -46,6 +59,7 @@ export const DEFAULT_CAPTAIN_CHARTER: CaptainCharter = {
   crewRuntimeMode: "full-access",
   retryLimit: 1,
   stallMinutes: 45,
+  verifyTimeoutMinutes: 10,
 };
 
 export const CaptainPlacement = Schema.Struct({
@@ -65,6 +79,43 @@ export const CaptainCrewReport = Schema.Struct({
   at: IsoDateTime,
 });
 export type CaptainCrewReport = typeof CaptainCrewReport.Type;
+
+export const CaptainVerifyResult = Schema.Struct({
+  cmd: Schema.String,
+  exit: Schema.NullOr(Schema.Int),
+  logTail: Schema.String,
+  startedAt: IsoDateTime,
+  finishedAt: IsoDateTime,
+});
+export type CaptainVerifyResult = typeof CaptainVerifyResult.Type;
+
+export const CaptainReviewVerdict = Schema.Literals(["approve", "reject"]);
+export type CaptainReviewVerdict = typeof CaptainReviewVerdict.Type;
+
+export const CaptainFindingSeverity = Schema.Literals(["high", "medium", "low"]);
+export type CaptainFindingSeverity = typeof CaptainFindingSeverity.Type;
+
+export const CaptainReviewFinding = Schema.Struct({
+  severity: CaptainFindingSeverity,
+  file: TrimmedNonEmptyString,
+  line: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  scenario: TrimmedNonEmptyString.check(Schema.isMaxLength(4_000)),
+});
+export type CaptainReviewFinding = typeof CaptainReviewFinding.Type;
+
+export const CaptainReview = Schema.Struct({
+  round: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  threadId: ThreadId,
+  model: ModelSelection,
+  sameProvider: Schema.Boolean,
+  verdict: Schema.NullOr(CaptainReviewVerdict),
+  findings: Schema.Array(CaptainReviewFinding),
+  previousFindings: Schema.Array(CaptainReviewFinding),
+  reprompted: Schema.Boolean,
+  startedAt: IsoDateTime,
+  finishedAt: Schema.NullOr(IsoDateTime),
+});
+export type CaptainReview = typeof CaptainReview.Type;
 
 export const Captain = Schema.Struct({
   id: CaptainId,
@@ -96,11 +147,48 @@ export const CaptainOrder = Schema.Struct({
   baseRef: Schema.NullOr(Schema.String),
   reportMd: Schema.NullOr(Schema.String),
   lastReport: Schema.NullOr(CaptainCrewReport),
+  verify: Schema.NullOr(CaptainVerifyResult),
+  review: Schema.NullOr(CaptainReview),
+  pendingFollowUp: Schema.NullOr(Schema.String),
+  stallLevel: NonNegativeInt,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastActivityAt: IsoDateTime,
 });
 export type CaptainOrder = typeof CaptainOrder.Type;
+
+export const CaptainEscalationId = TrimmedNonEmptyString.pipe(Schema.brand("CaptainEscalationId"));
+export type CaptainEscalationId = typeof CaptainEscalationId.Type;
+
+export const CaptainEscalationKind = Schema.Literals([
+  "decision",
+  "approval",
+  "one_way_door",
+  "retry_limit",
+  "budget",
+  "stall",
+  "conflict",
+]);
+export type CaptainEscalationKind = typeof CaptainEscalationKind.Type;
+
+export const CaptainEscalationStatus = Schema.Literals(["open", "resolved"]);
+export type CaptainEscalationStatus = typeof CaptainEscalationStatus.Type;
+
+export const CaptainEscalation = Schema.Struct({
+  id: CaptainEscalationId,
+  captainId: CaptainId,
+  orderId: Schema.NullOr(CaptainOrderId),
+  kind: CaptainEscalationKind,
+  summary: Schema.String,
+  detail: Schema.String,
+  options: Schema.Array(Schema.String),
+  status: CaptainEscalationStatus,
+  resolution: Schema.NullOr(Schema.String),
+  requestId: Schema.NullOr(RuntimeRequestId),
+  createdAt: IsoDateTime,
+  resolvedAt: Schema.NullOr(IsoDateTime),
+});
+export type CaptainEscalation = typeof CaptainEscalation.Type;
 
 export class CaptainError extends Schema.TaggedError<CaptainError>()("CaptainError", {
   reason: Schema.Literals([
@@ -115,6 +203,9 @@ export class CaptainError extends Schema.TaggedError<CaptainError>()("CaptainErr
     "not_crew",
     "invalid_order",
     "crew_not_running",
+    "not_reviewer",
+    "escalation_not_found",
+    "invalid_state",
     "storage",
     "dispatch",
   ]),
@@ -149,6 +240,12 @@ export class CaptainError extends Schema.TaggedError<CaptainError>()("CaptainErr
         return `The order is not valid.${detail}`;
       case "crew_not_running":
         return `The order has no running crew thread.${detail}`;
+      case "not_reviewer":
+        return `Only the reviewer thread of an order under review can use this tool.${detail}`;
+      case "escalation_not_found":
+        return `The needs-you item was not found.${detail}`;
+      case "invalid_state":
+        return `The order is not in a state that allows this.${detail}`;
       case "storage":
         return `Captain storage failed.${detail}`;
       case "dispatch":
@@ -221,6 +318,8 @@ export const CaptainMcpOrderSummary = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   waitingOn: Schema.Array(CaptainOrderId),
   lastReport: Schema.NullOr(CaptainCrewReport),
+  verify: Schema.NullOr(CaptainVerifyResult),
+  review: Schema.NullOr(CaptainReview),
   threadId: Schema.NullOr(ThreadId),
   link: Schema.optional(Schema.String),
 });
@@ -231,9 +330,14 @@ export const CaptainMcpOrderListResult = Schema.Struct({
   counts: Schema.Struct({
     queued: NonNegativeInt,
     running: NonNegativeInt,
+    verifying: NonNegativeInt,
+    verify_failed: NonNegativeInt,
+    reviewing: NonNegativeInt,
+    accepted: NonNegativeInt,
     done: NonNegativeInt,
     dropped: NonNegativeInt,
   }),
+  needsYou: NonNegativeInt,
   orders: Schema.Array(CaptainMcpOrderSummary),
 });
 export type CaptainMcpOrderListResult = typeof CaptainMcpOrderListResult.Type;
@@ -292,3 +396,80 @@ export const CaptainMcpCrewReportResult = Schema.Struct({
   state: CaptainOrderState,
 });
 export type CaptainMcpCrewReportResult = typeof CaptainMcpCrewReportResult.Type;
+
+export const CaptainMcpOrderAnswerInput = Schema.Struct({
+  orderId: CaptainOrderId,
+  text: OrderText.annotate({ description: "The answer to the crew's question." }),
+});
+export type CaptainMcpOrderAnswerInput = typeof CaptainMcpOrderAnswerInput.Type;
+
+export const CaptainMcpOrderAnswerResult = Schema.Struct({
+  orderId: CaptainOrderId,
+  delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+  resolved: NonNegativeInt,
+});
+export type CaptainMcpOrderAnswerResult = typeof CaptainMcpOrderAnswerResult.Type;
+
+export const CaptainMcpOrderRetryInput = Schema.Struct({
+  orderId: CaptainOrderId,
+  brief: Schema.optional(
+    OrderText.annotate({ description: "A revised brief. Omit to send the original again." }),
+  ),
+});
+export type CaptainMcpOrderRetryInput = typeof CaptainMcpOrderRetryInput.Type;
+
+export const CaptainMcpOrderRetryResult = Schema.Struct({
+  orderId: CaptainOrderId,
+  state: CaptainOrderState,
+  retries: NonNegativeInt,
+});
+export type CaptainMcpOrderRetryResult = typeof CaptainMcpOrderRetryResult.Type;
+
+export const CaptainMcpEscalateInput = Schema.Struct({
+  orderId: Schema.optional(CaptainOrderId),
+  kind: CaptainEscalationKind,
+  summary: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+  detail: Schema.optional(Schema.String.check(Schema.isMaxLength(8_000))),
+  options: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(200))).annotate({
+      description: "The choices to offer the user.",
+    }),
+  ),
+});
+export type CaptainMcpEscalateInput = typeof CaptainMcpEscalateInput.Type;
+
+export const CaptainMcpEscalateResult = Schema.Struct({ escalationId: CaptainEscalationId });
+export type CaptainMcpEscalateResult = typeof CaptainMcpEscalateResult.Type;
+
+export const CaptainMcpReviewSubmitInput = Schema.Struct({
+  verdict: CaptainReviewVerdict,
+  findings: Schema.Array(CaptainReviewFinding).annotate({
+    description: "Each problem with the file, the line if known, and the scenario that breaks.",
+  }),
+});
+export type CaptainMcpReviewSubmitInput = typeof CaptainMcpReviewSubmitInput.Type;
+
+export const CaptainMcpReviewSubmitResult = Schema.Struct({
+  orderId: CaptainOrderId,
+  state: CaptainOrderState,
+});
+export type CaptainMcpReviewSubmitResult = typeof CaptainMcpReviewSubmitResult.Type;
+
+export const CaptainEscalationsListInput = Schema.Struct({
+  captainId: Schema.optional(CaptainId),
+});
+export type CaptainEscalationsListInput = typeof CaptainEscalationsListInput.Type;
+
+export const CaptainEscalationsListResult = Schema.Struct({
+  escalations: Schema.Array(CaptainEscalation),
+});
+export type CaptainEscalationsListResult = typeof CaptainEscalationsListResult.Type;
+
+export const CaptainEscalationsResolveInput = Schema.Struct({
+  escalationId: CaptainEscalationId,
+  resolution: TrimmedNonEmptyString.check(Schema.isMaxLength(2_000)),
+});
+export type CaptainEscalationsResolveInput = typeof CaptainEscalationsResolveInput.Type;
+
+export const CaptainEscalationsResolveResult = Schema.Struct({ escalation: CaptainEscalation });
+export type CaptainEscalationsResolveResult = typeof CaptainEscalationsResolveResult.Type;
