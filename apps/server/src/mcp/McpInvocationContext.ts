@@ -29,6 +29,8 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
+  /** Set per request from the captain tables; it only decides which tools the caller sees. */
+  readonly role?: "captain" | "crew";
 }
 
 export interface McpClientCaller {
@@ -160,6 +162,18 @@ export const hiddenWhileLinksOff = (): boolean => {
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
 };
+
+const callerRole = () => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.thread?.role;
+};
+
+/** `McpSchema.EnabledWhen` for the tools only a captain thread sees. */
+export const visibleToCaptains = (): boolean => callerRole() === "captain";
+
+/** `McpSchema.EnabledWhen` for the tools only a crew thread sees. */
+export const visibleToCrew = (): boolean => callerRole() === "crew";
 
 export type McpCapabilityError<C extends McpCapability> = C extends "preview"
   ? PreviewAutomationUnavailableError

@@ -3,13 +3,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { McpProviderSessions } from "@t3tools/provider-core/server/McpProviderSessions";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { McpServer } from "effect/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import { AssetSigner } from "../assets/AssetSigner.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
+import { CaptainService } from "../captains/CaptainService.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
@@ -49,6 +51,7 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(AssetSigner)({}),
+  Layer.mock(CaptainService)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
   Layer.mock(GitVcsDriver)({}),
@@ -108,6 +111,20 @@ const codexAdditionalContext = () =>
     .map((entry) => entry.value)
     .join("");
 
+// What a thread with no captain or crew role is offered: tools gated by EnabledWhen are left out.
+const offeredToOrdinaryThread = ({
+  annotations,
+}: {
+  readonly annotations: Context.Context<never>;
+}) =>
+  Context.getOrUndefined(
+    annotations,
+    McpSchema.EnabledWhen,
+  )?.({
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+  }) ?? true;
+
 const layerAdvertisedTools = McpHttpServer.layerTools.pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provide(toolHandlerServices),
@@ -135,7 +152,7 @@ it.effect("agent context matches the committed budget", () =>
       // The model sees these fields. outputSchema and annotations are protocol metadata.
       mcpToolListJsonBytes: utf8Bytes(
         JSON.stringify(
-          mcp.tools.map(({ tool }) => ({
+          mcp.tools.filter(offeredToOrdinaryThread).map(({ tool }) => ({
             name: tool.name,
             description: tool.description,
             inputSchema: tool.inputSchema,
