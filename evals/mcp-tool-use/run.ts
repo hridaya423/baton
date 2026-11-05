@@ -1201,6 +1201,13 @@ export const t3Default = (
       return { orderId: input.orderId, delivery: "steered", resolved: 0 };
     case "order_retry":
       return { orderId: input.orderId, state: "running", retries: 1 };
+    case "order_land":
+      return {
+        orderId: input.orderId,
+        state: input.delivery === "merge" ? "accepted" : "landing",
+        delivery: input.delivery ?? "branch",
+        needsApproval: input.delivery === "merge",
+      };
     case "escalate":
       return { escalationId: "escalation:eval" };
     case "review_submit":
