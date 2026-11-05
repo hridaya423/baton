@@ -5,7 +5,7 @@ import type {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { BotIcon, PencilRulerIcon } from "lucide-react";
+import { BotIcon, PaletteIcon, PencilRulerIcon } from "lucide-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
@@ -40,6 +40,9 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   accessDisplay?: "label" | "icon" | "hidden";
   /** Draw the icon in the label color, not muted (the mode differs from the user's default). */
   emphasized?: boolean;
+  designMode?: boolean;
+  /** Without it the composer has no Design toggle. */
+  onToggleDesignMode?: (() => void) | undefined;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
@@ -93,6 +96,39 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
         </span>
       </TooltipTrigger>
       <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
+    </Tooltip>
+  ) : null;
+
+  const designModeTooltip = props.designMode
+    ? "Design mode is on. Click to turn it off"
+    : "Design mode is off. Click to design before building";
+  const designModeToggle = props.onToggleDesignMode ? (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <ComposerControl
+            size={size}
+            className="shrink-0 whitespace-nowrap"
+            aria-pressed={props.designMode === true}
+            type="button"
+            onClick={props.onToggleDesignMode}
+            aria-label={designModeTooltip}
+          />
+        }
+      >
+        <ComposerControlIcon
+          icon={PaletteIcon}
+          size={size}
+          className={props.designMode ? "text-current opacity-100" : undefined}
+        />
+        <span
+          data-composer-control-label
+          className={size === "xs" ? "sr-only" : "sr-only sm:not-sr-only"}
+        >
+          Design
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{designModeTooltip}</TooltipPopup>
     </Tooltip>
   ) : null;
 
@@ -150,6 +186,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
     <>
       {accessDisplay === "hidden" ? null : permissionsChip}
       {interactionModeToggle}
+      {designModeToggle}
     </>
   );
 });

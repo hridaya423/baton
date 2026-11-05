@@ -59,7 +59,11 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { formatSentFromContext } from "./sentFromContext.ts";
 import * as ThreadRoles from "./ThreadRoles.ts";
-import { t3RolePrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  t3RolePrompt,
+  t3TurnInstructions,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
+import { ensureBatonExcluded } from "../project/batonExclude.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -861,10 +865,24 @@ ${promptText}`;
       const roleEntry = Option.isNone(threadRoles)
         ? undefined
         : yield* threadRoles.value.get(projection.thread.id);
+      const designMode = projection.thread.designMode === true;
+      const turnInstructions = t3TurnInstructions({
+        roleInstructions: roleEntry?.instructions,
+        designMode,
+      });
       const userText =
-        roleEntry === undefined || promptText.trimStart().startsWith("/")
+        turnInstructions === undefined || promptText.trimStart().startsWith("/")
           ? sentText
-          : t3RolePrompt(sentText, roleEntry.instructions);
+          : t3RolePrompt(sentText, turnInstructions);
+      if (designMode && resolvedRuntimePolicy.cwd !== null) {
+        yield* ensureBatonExcluded(resolvedRuntimePolicy.cwd).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.catch((cause) =>
+            Effect.logWarning("design mode could not exclude .baton from git", { cause }),
+          ),
+        );
+      }
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;

@@ -387,6 +387,7 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "composer.host": "Choose machine",
   "composer.effort": "Choose effort",
   "composer.mode": "Choose access mode",
+  "composer.design": "Toggle Design mode",
   "composer.workspace": "Choose workspace",
   "composer.previousWorktree": "Use previous worktree",
   "composer.branch": "Choose branch",

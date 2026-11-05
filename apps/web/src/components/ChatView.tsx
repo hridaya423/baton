@@ -611,6 +611,9 @@ export default function ChatView(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
+  const composerDesignMode = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.designMode ?? null,
+  );
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -1361,6 +1364,7 @@ export default function ChatView(props: ChatViewProps) {
     interactionMode:
       composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
   });
+  const designMode = composerDesignMode ?? activeThread?.designMode ?? false;
   const conversationProviderStatus =
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
@@ -2079,6 +2083,7 @@ export default function ChatView(props: ChatViewProps) {
     branch?: string;
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
+    designMode?: boolean;
   }): Promise<AtomCommandResult<void, unknown>> => {
     if (!serverThread) {
       return AsyncResult.success(undefined);
@@ -2123,13 +2128,16 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
 
-    if (input.interactionMode !== serverThread.interactionMode) {
+    const designModeChanged =
+      input.designMode !== undefined && input.designMode !== (serverThread.designMode === true);
+    if (input.interactionMode !== serverThread.interactionMode || designModeChanged) {
       result = mapAtomCommandResult(
         await setThreadInteractionMode({
           environmentId,
           input: {
             threadId: input.threadId,
             interactionMode: input.interactionMode,
+            ...(designModeChanged ? { designMode: input.designMode } : {}),
             createdAt: input.createdAt,
           },
         }),
@@ -2967,6 +2975,7 @@ export default function ChatView(props: ChatViewProps) {
     onStartFromOriginChange,
     openProviderSetupStable,
     toggleInteractionModeStable,
+    toggleDesignModeStable,
   } = useComposerSelection({
     environmentId,
     composerDraftTarget,
@@ -2982,6 +2991,7 @@ export default function ChatView(props: ChatViewProps) {
     runtimeMode,
     interactionMode,
     interactionModeEnabled,
+    designMode,
     isLocalDraftThread,
     canOverrideServerThreadEnvMode,
     setPendingServerThreadEnvModeEntry,
@@ -3054,6 +3064,7 @@ export default function ChatView(props: ChatViewProps) {
     isGitRepo,
     phase,
     interactionMode,
+    designMode,
     failedRunId,
     failedRunMessage,
     runtimeMode,
@@ -3906,6 +3917,8 @@ export default function ChatView(props: ChatViewProps) {
                               onOpenProviderSetup={openProviderSetupStable}
                               getModelDisabledReason={getModelDisabledReason}
                               toggleInteractionMode={toggleInteractionModeStable}
+                              designMode={designMode}
+                              toggleDesignMode={toggleDesignModeStable}
                               handleRuntimeModeChange={handleRuntimeModeChangeStable}
                               handleInteractionModeChange={handleInteractionModeChangeStable}
                               focusComposer={focusComposerStable}

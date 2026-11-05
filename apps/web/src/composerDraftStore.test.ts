@@ -1610,6 +1610,7 @@ describe("composerDraftStore modelSelection", () => {
     store.setTerminalContexts(threadRef, [makeTerminalContext({ id: "terminal" })]);
     store.setRuntimeMode(threadRef, "approval-required");
     store.setInteractionMode(threadRef, "plan");
+    store.setDesignMode(threadRef, true);
     store.setModelSelection(threadRef, pick, { explicit: true });
     const before = draftFor(threadId, TEST_ENVIRONMENT_ID)!;
     const remoteRef = scopeThreadRef(OTHER_TEST_ENVIRONMENT_ID, threadId);
@@ -1655,6 +1656,16 @@ describe("composerDraftStore modelSelection", () => {
     });
     expect(effective.selectedModel).toBe(remoteModel);
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider).toEqual({});
+  });
+
+  it("keeps a draft that only holds the Design toggle, and drops it when set back to the thread's own", () => {
+    const store = useComposerDraftStore.getState();
+    store.setDesignMode(threadRef, false);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.designMode).toBe(false);
+    store.setDesignMode(threadRef, true);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.designMode).toBe(true);
+    store.setDesignMode(threadRef, null);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 
   it("retains an unavailable provider pick through differing durable model updates", () => {

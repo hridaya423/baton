@@ -3,6 +3,7 @@ import { memo, useRef } from "react";
 import { EllipsisIcon } from "lucide-react";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -23,6 +24,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   size?: "sm" | "xs";
   /** Close the portaled popup when its trigger hides. */
   hidden?: boolean;
+  designMode?: boolean;
+  onToggleDesignMode?: (() => void) | undefined;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
@@ -64,6 +67,17 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
               <MenuRadioItem value="default">Chat</MenuRadioItem>
               <MenuRadioItem value="plan">Plan</MenuRadioItem>
             </MenuRadioGroup>
+            {props.showPermissions !== false ? <MenuDivider /> : null}
+          </>
+        ) : null}
+        {props.onToggleDesignMode ? (
+          <>
+            <MenuCheckboxItem
+              checked={props.designMode === true}
+              onCheckedChange={props.onToggleDesignMode}
+            >
+              Design
+            </MenuCheckboxItem>
             {props.showPermissions !== false ? <MenuDivider /> : null}
           </>
         ) : null}

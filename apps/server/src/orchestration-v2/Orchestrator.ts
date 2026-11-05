@@ -2873,6 +2873,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       modelSelection: command.modelSelection,
       runtimeMode: command.runtimeMode,
       interactionMode: command.interactionMode,
+      ...(command.designMode === true ? { designMode: true } : {}),
       branch: command.branch,
       worktreePath: command.worktreePath,
       activeProviderThreadId: null,
@@ -4041,7 +4042,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.runtime-mode.set":
           return { ...thread, runtimeMode: command.runtimeMode, updatedAt: now };
         case "thread.interaction-mode.set":
-          return { ...thread, interactionMode: command.interactionMode, updatedAt: now };
+          return {
+            ...thread,
+            interactionMode: command.interactionMode,
+            ...(command.designMode === undefined ? {} : { designMode: command.designMode }),
+            updatedAt: now,
+          };
         case "thread.model-selection.set":
         case "provider.switch":
           return {

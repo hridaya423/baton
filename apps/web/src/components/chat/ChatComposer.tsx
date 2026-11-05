@@ -327,6 +327,7 @@ export interface ChatComposerHandle {
   stepReasoningEffort: (direction: 1 | -1) => void;
   toggleModelPicker: () => void;
   openControl: (command: KeybindingCommand) => void;
+  toggleDesignMode: () => void;
   isModelPickerOpen: () => boolean;
   isCaretAtStart: () => boolean;
   compactContext: () => void;
@@ -527,6 +528,9 @@ export interface ChatComposerProps {
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   toggleInteractionMode: () => void;
+  /** Without a toggle (a thread with no project) the composer offers no Design mode. */
+  designMode?: boolean | undefined;
+  toggleDesignMode?: (() => void) | undefined;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
 
@@ -628,6 +632,8 @@ export function ChatComposer(props: ChatComposerProps) {
     onOpenProviderSetup,
     getModelDisabledReason,
     toggleInteractionMode,
+    designMode,
+    toggleDesignMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
     focusComposer,
@@ -2644,6 +2650,8 @@ export function ChatComposer(props: ChatComposerProps) {
       defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
       toggleInteractionMode={toggleInteractionMode}
+      designMode={designMode}
+      toggleDesignMode={toggleDesignMode}
       handleRuntimeModeChange={handleRuntimeModeChange}
       composerControlsCollapsed={composerControlsCollapsed}
       effortDisplay={settings.effortDisplay}
@@ -3228,6 +3236,7 @@ export function ChatComposer(props: ChatComposerProps) {
           });
         }
       },
+      toggleDesignMode: () => toggleDesignMode?.(),
       toggleModelPicker: () => {
         if (isComposerModelPickerOpen) {
           setIsComposerModelPickerOpen(false);

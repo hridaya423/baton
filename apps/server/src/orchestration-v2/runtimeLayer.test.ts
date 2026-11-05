@@ -2552,6 +2552,34 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         interactionMode: "plan",
       });
+      const designModeOf = Effect.gen(function* () {
+        const shell = yield* orchestrator.getShellSnapshot();
+        return shell.threads.find((thread) => thread.id === threadId)?.designMode;
+      });
+      assert.isUndefined(yield* designModeOf);
+      yield* orchestrator.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-design-on"),
+        threadId,
+        interactionMode: "plan",
+        designMode: true,
+      });
+      assert.isTrue(yield* designModeOf);
+      yield* orchestrator.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-design-kept"),
+        threadId,
+        interactionMode: "default",
+      });
+      assert.isTrue(yield* designModeOf);
+      yield* orchestrator.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("runtime-layer-lifecycle-design-off"),
+        threadId,
+        interactionMode: "plan",
+        designMode: false,
+      });
+      assert.isFalse(yield* designModeOf);
       yield* orchestrator.dispatch({
         type: "thread.model-selection.set",
         commandId: CommandId.make("runtime-layer-lifecycle-model"),

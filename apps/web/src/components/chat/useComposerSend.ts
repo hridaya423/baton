@@ -187,6 +187,7 @@ interface ComposerSendInput {
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
   readonly interactionMode: ProviderInteractionMode;
+  readonly designMode: boolean;
   readonly failedRunId: RunId | null;
   readonly failedRunMessage: ChatMessage | null;
   readonly runtimeMode: RuntimeMode;
@@ -260,6 +261,7 @@ interface ComposerSendInput {
     branch?: string;
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
+    designMode?: boolean;
   }) => Promise<AtomCommandResult<void, unknown>>;
 }
 
@@ -288,6 +290,7 @@ export function useComposerSend(input: ComposerSendInput) {
     isGitRepo,
     phase,
     interactionMode,
+    designMode,
     failedRunId,
     failedRunMessage,
     runtimeMode,
@@ -379,6 +382,7 @@ export function useComposerSend(input: ComposerSendInput) {
     composerRef,
     promptRef,
     runtimeMode,
+    designMode,
     startFromOrigin,
     resetLocalDispatch,
     setThreadError,
@@ -1335,6 +1339,7 @@ export function useComposerSend(input: ComposerSendInput) {
           : {}),
         runtimeMode,
         interactionMode: sendInteractionMode,
+        designMode,
       });
       if (settingsResult._tag === "Failure") {
         failure = settingsResult;
@@ -1389,6 +1394,7 @@ export function useComposerSend(input: ComposerSendInput) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
+                      ...(designMode ? { designMode: true } : {}),
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,

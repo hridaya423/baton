@@ -67,7 +67,6 @@ import {
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
-  PaletteIcon,
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
@@ -75,6 +74,7 @@ import {
   PinOffIcon,
   SquarePenIcon,
   SwatchBookIcon,
+  PaletteIcon,
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
@@ -440,6 +440,8 @@ function OpenCommandPaletteDialog(props: {
   readonly initialContext: CommandPaletteReturnContext | undefined;
 }) {
   const navigate = useNavigate();
+  const composerHandleRef = useComposerHandleContext();
+  const toggleDesignMode = useStableCallback(() => composerHandleRef?.current?.toggleDesignMode());
   const openLayoutPage = useOpenLayoutPage();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { openChildSearch, setOpen } = props;
@@ -1378,6 +1380,21 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "chat.find",
       run: async () => {
         openThreadFind(activeThreadKey);
+      },
+    });
+  }
+
+  if (paletteRouteTarget !== null && (activeThread ?? activeDraftThread) !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:toggle-design-mode",
+      searchTerms: ["design", "mockup", "directions", "mode", "toggle"],
+      title: "Toggle Design mode",
+      description: "Explore design directions with mockups before building",
+      icon: <PaletteIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "composer.design",
+      run: async () => {
+        toggleDesignMode();
       },
     });
   }

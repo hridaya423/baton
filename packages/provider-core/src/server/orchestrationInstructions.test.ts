@@ -1,12 +1,15 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  T3_CODE_DESIGN_MODE_INSTRUCTIONS,
+  T3_CODE_DESIGN_TASTE_LINE,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
   t3AcpPromptWithInstructions,
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
+  t3TurnInstructions,
 } from "./orchestrationInstructions.ts";
 
 describe("T3 device instructions", () => {
@@ -81,5 +84,30 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
+  });
+});
+
+describe("T3 turn instructions", () => {
+  it("add the design block only while Design is on, after any role instructions", () => {
+    assert.isUndefined(t3TurnInstructions({}));
+    assert.isUndefined(t3TurnInstructions({ designMode: false }));
+    assert.equal(t3TurnInstructions({ designMode: true }), T3_CODE_DESIGN_MODE_INSTRUCTIONS);
+    assert.equal(t3TurnInstructions({ roleInstructions: "role" }), "role");
+    assert.equal(
+      t3TurnInstructions({ roleInstructions: "role", designMode: true }),
+      `role\n\n${T3_CODE_DESIGN_MODE_INSTRUCTIONS}`,
+    );
+  });
+
+  it("hand every design child the taste line and the media tools by their names", () => {
+    assert.include(T3_CODE_DESIGN_MODE_INSTRUCTIONS, T3_CODE_DESIGN_TASTE_LINE);
+    for (const name of [
+      "media_image_generate",
+      "media_image_edit",
+      "html_render",
+      "delegate_task",
+    ]) {
+      assert.include(T3_CODE_DESIGN_MODE_INSTRUCTIONS, `\`${name}\``);
+    }
   });
 });

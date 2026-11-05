@@ -145,6 +145,7 @@ export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
 
 export interface SetThreadInteractionModeInput extends ThreadCommandInput {
   readonly interactionMode: ProviderInteractionMode;
+  readonly designMode?: boolean;
 }
 
 interface StartThreadBootstrap {
@@ -154,6 +155,7 @@ interface StartThreadBootstrap {
     readonly modelSelection: ModelSelection;
     readonly runtimeMode: RuntimeMode;
     readonly interactionMode: ProviderInteractionMode;
+    readonly designMode?: boolean;
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly createdAt: string;
@@ -675,6 +677,7 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
       commandId: yield* allocateCommandId(input),
       threadId: input.threadId,
       interactionMode: input.interactionMode,
+      ...(input.designMode === undefined ? {} : { designMode: input.designMode }),
     });
   },
 );
@@ -732,6 +735,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       modelSelection: input.modelSelection ?? thread.modelSelection,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
+      ...(bootstrap?.designMode === undefined ? {} : { designMode: bootstrap.designMode }),
       workspaceStrategy,
       initialMessage: {
         messageId: input.message.messageId,

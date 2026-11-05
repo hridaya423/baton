@@ -198,3 +198,31 @@ export const t3ReviewerRoleInstructions = (input: {
 export function t3RolePrompt(prompt: string, instructions: string): string {
   return `<t3_code_role_instructions>${instructions}</t3_code_role_instructions>\n\n${prompt}`;
 }
+
+export const T3_CODE_DESIGN_TASTE_LINE =
+  "Use every design skill you have. Make it innovative and unique; avoid generic AI-looking defaults.";
+
+export const T3_CODE_DESIGN_MODE_INSTRUCTIONS = `## T3 Code design mode
+
+The user turned Design on. For a design request, run this loop in order. For a plain question or a small edit, ignore it.
+
+A round lives in \`.baton/design/<round-id>/\` in your working directory (round-id: a short slug such as \`tea-shop-1\`): \`brief.json\`, \`references.md\`, \`mockups/\`, \`notes.md\` (the user's comments), \`scores.json\`. When the user is answering an earlier pick or commenting on its mockups, read the latest round there and continue it.
+
+1. Brief. Write \`brief.json\` (goal, audience, constraints, assumptions), then state the assumptions in chat in a few lines. Ask only what you cannot design without.
+2. References. Choose 3-4 directions that differ in kind (typography-led, image-led, layout-led, and so on), not shades of one idea. Give each a different anchor reference, a real site, product or artwork, and a reason. Research with the tools you have: web search, and the \`gather\` or \`design-research\` skills if installed. Save them in \`references.md\`.
+3. Explore. In one turn, start one \`delegate_task\` child per direction, each running async. Its task names the direction, its anchor reference and why, the \`brief.json\` path and the mockup path (\`mockups/<direction>.png\`), and carries this line verbatim: "${T3_CODE_DESIGN_TASTE_LINE}" The child makes one mockup with \`media_image_generate\` (\`media_image_edit\` to revise one). If that reports no image key, it saves an HTML mockup as \`mockups/<direction>.html\` and checks it with \`html_preview\`. It does not build the project or delegate, and replies with the path and one line.
+4. Pick. When the children finish, call \`html_render\` once with a grid of the mockups, each labelled with its direction and one line. Then ask the user to pick or comment, and stop. Build nothing and start no more children until they answer. Save their notes to \`notes.md\`. Comments on the mockups start another round the same way, for the changed directions only.
+5. Build. When the user picks, implement that direction in the project with the mockup as the target. It is your work, not a child's.
+6. Judge. Screenshot the build with \`preview_*\` (this is browser work the user asked for) or \`html_preview\` for a static page. Start a fresh \`delegate_task\` critic that did not build it. Give it the mockup path and where to see the build, and ask for fidelity to the mockup and craft, each 1-10, with findings, as JSON. Repair the findings, then judge again with a new critic: at least two rounds, until both scores are 8 or more, and no more than four. Record each round in \`scores.json\`. End with the final scores and what is left.`;
+
+/** Every provider alike: the instructions a thread's role and its Design toggle add to each turn. */
+export function t3TurnInstructions(input: {
+  readonly roleInstructions?: string | undefined;
+  readonly designMode?: boolean | undefined;
+}): string | undefined {
+  const parts = [
+    ...(input.roleInstructions === undefined ? [] : [input.roleInstructions]),
+    ...(input.designMode === true ? [T3_CODE_DESIGN_MODE_INSTRUCTIONS] : []),
+  ];
+  return parts.length === 0 ? undefined : parts.join("\n\n");
+}

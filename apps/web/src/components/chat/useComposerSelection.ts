@@ -42,6 +42,7 @@ interface ComposerSelectionInput {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly interactionModeEnabled: boolean;
+  readonly designMode: boolean;
   readonly isLocalDraftThread: boolean;
   readonly canOverrideServerThreadEnvMode: boolean;
   readonly setPendingServerThreadEnvModeEntry: Dispatch<
@@ -73,6 +74,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     runtimeMode,
     interactionMode,
     interactionModeEnabled,
+    designMode,
     isLocalDraftThread,
     canOverrideServerThreadEnvMode,
     setPendingServerThreadEnvModeEntry,
@@ -88,6 +90,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
+  const setComposerDraftDesignMode = useComposerDraftStore((store) => store.setDesignMode);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
 
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
@@ -115,6 +118,11 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   };
   const toggleInteractionModeStable = useStableCallback(toggleInteractionMode);
+  const toggleDesignMode = () => {
+    setComposerDraftDesignMode(composerDraftTarget, !designMode);
+    scheduleComposerFocus();
+  };
+  const toggleDesignModeStable = useStableCallback(toggleDesignMode);
   const openProviderSetup = (instanceId: ProviderInstanceId) => {
     void navigate({
       to: "/settings/providers",
@@ -263,5 +271,6 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     onStartFromOriginChange,
     openProviderSetupStable,
     toggleInteractionModeStable,
+    toggleDesignModeStable,
   };
 }
