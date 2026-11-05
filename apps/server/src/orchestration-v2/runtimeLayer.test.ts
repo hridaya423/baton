@@ -6066,6 +6066,76 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("queue.hold holds queued runs until queue.resume, and commits with none queued", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-queue-hold");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Queue hold",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const emptyHold = yield* orchestrator.dispatch({
+        type: "queue.hold",
+        commandId: CommandId.make(`${threadId}:hold-empty`),
+        threadId,
+      });
+      assert.isAbove(emptyHold.storedEvents.length, 0);
+      for (const [index, text] of ["Active", "Queued"].entries()) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:${index}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:${index}`),
+          text,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+        });
+      }
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = before.runs[0]!;
+      const queuedRun = before.runs[1]!;
+      yield* orchestrator.dispatch({
+        type: "queue.hold",
+        commandId: CommandId.make(`${threadId}:hold`),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make(`${threadId}:interrupt`),
+        threadId,
+        runId: activeRun.id,
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const held = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(held.runs.find((run) => run.id === queuedRun.id)?.status, "queued");
+      assert.isTrue(held.runs.find((run) => run.id === queuedRun.id)?.queueHeld);
+
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make(`${threadId}:resume`),
+        threadId,
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      const resumed = yield* orchestrator.getThreadProjection(threadId);
+      const released = resumed.runs.find((run) => run.id === queuedRun.id);
+      assert.notEqual(released?.status, "queued");
+      assert.isNotTrue(released?.queueHeld);
+    }),
+  );
+
   it.effect("places held queued messages after a continuation that started first", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
