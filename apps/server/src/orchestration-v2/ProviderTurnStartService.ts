@@ -57,6 +57,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { formatSentFromContext } from "./sentFromContext.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -843,10 +844,17 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
+      const promptText = projectComposerContextForProvider({
         text: message.text,
         records: message.context?.records ?? [],
       });
+      // Adapters run slash commands (`/compact`, skills) only from the start of the text.
+      const userText =
+        message.sentFrom === undefined || promptText.trimStart().startsWith("/")
+          ? promptText
+          : `${formatSentFromContext(message.sentFrom)}
+
+${promptText}`;
       // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
       const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;

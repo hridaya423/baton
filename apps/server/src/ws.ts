@@ -41,6 +41,7 @@ import {
   type EditorId,
   type FileManagerRevealKind,
   type OrchestrationV2Command,
+  type OrchestrationV2MessageSentFrom,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type MessageId,
@@ -721,6 +722,34 @@ function shouldUseBoundedThreadSnapshot(input: {
   return input.acceptBoundedSnapshot === true;
 }
 
+const MAX_HOST_HEADER_LENGTH = 255;
+
+/**
+ * What this socket's user messages record as `sentFrom`. The `Host` header is
+ * the address the client dialed; Tailscale Serve and the Vite dev proxy keep it,
+ * while the socket's peer address would read as loopback behind either.
+ */
+export function readMessageSentFrom(
+  request: HttpServerRequest.HttpServerRequest,
+): OrchestrationV2MessageSentFrom {
+  const url = HttpServerRequest.toURL(request);
+  const params = Option.isSome(url) ? url.value.searchParams : new URLSearchParams();
+  const surface = params.get("clientSurface");
+  const os = params.get("clientOs");
+  const deviceType = params.get("clientDeviceType");
+  const connectionMethod = params.get("connectionMethod");
+  const host = request.headers["host"]?.trim() ?? "";
+  return {
+    ...(isClientSurface(surface) ? { surface } : {}),
+    ...(isClientOs(os) && os !== "unknown" ? { os } : {}),
+    ...(isClientDeviceType(deviceType) && deviceType !== "unknown" ? { deviceType } : {}),
+    ...(isClientConnectionMethod(connectionMethod) && connectionMethod !== "unknown"
+      ? { connectionMethod }
+      : {}),
+    ...(host !== "" && host.length <= MAX_HOST_HEADER_LENGTH && !/\s/.test(host) ? { host } : {}),
+  };
+}
+
 // Keep telemetry per socket; several client types can connect simultaneously.
 function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest) {
   const url = requestUrl(request);
@@ -1357,6 +1386,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
 
 export const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
+  clientSentFrom: OrchestrationV2MessageSentFrom,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
@@ -1483,6 +1513,19 @@ export const layerWsRpc = (
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+      // Replaces any client-sent value: only the server sees the connection.
+      const messageSentFrom = serverEnvironment.getDescriptor.pipe(
+        Effect.map(({ label }): OrchestrationV2MessageSentFrom => {
+          const serverLabel = label.trim();
+          return serverLabel === "" ? clientSentFrom : { ...clientSentFrom, serverLabel };
+        }),
+      );
+      const withMessageSentFrom = (
+        command: OrchestrationV2Command,
+      ): Effect.Effect<OrchestrationV2Command> =>
+        command.type === "message.dispatch"
+          ? messageSentFrom.pipe(Effect.map((sentFrom) => ({ ...command, sentFrom })))
+          : Effect.succeed(command);
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
       yield* Effect.addFinalizer(() =>
@@ -2053,12 +2096,16 @@ export const layerWsRpc = (
                 .enqueueCommand(
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
-                    : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
+                    : withMessageSentFrom(command).pipe(
+                        Effect.flatMap((stamped) =>
+                          ThreadMessageIntake.dispatchCommand(
+                            ThreadManagementService.withCreationProvenance(stamped, {
+                              createdBy: "user",
+                              creationSource:
+                                "creationSource" in command ? command.creationSource : "web",
+                            }),
+                          ),
+                        ),
                       )
                   ).pipe(Effect.provide(intakeContext)),
                 )
@@ -2214,38 +2261,44 @@ export const layerWsRpc = (
             Effect.andThen(
               startup
                 .enqueueCommand(
-                  ThreadMessageIntake.launchThread({
-                    commandId: input.commandId,
-                    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-                    ...(input.reuseExistingThread === undefined
-                      ? {}
-                      : { reuseExistingThread: input.reuseExistingThread }),
-                    projectId: input.projectId,
-                    title: input.title,
-                    ...(input.generateTitle === undefined
-                      ? {}
-                      : { generateTitle: input.generateTitle }),
-                    modelSelection: input.modelSelection,
-                    runtimeMode: input.runtimeMode,
-                    interactionMode: input.interactionMode,
-                    workspaceStrategy: input.workspaceStrategy,
-                    ...(input.initialMessage === undefined
-                      ? {}
-                      : {
-                          initialMessage: {
-                            ...(input.initialMessage.messageId === undefined
-                              ? {}
-                              : { messageId: input.initialMessage.messageId }),
-                            text: input.initialMessage.text,
-                            attachments: input.initialMessage.attachments,
-                            ...(input.initialMessage.context === undefined
-                              ? {}
-                              : { context: input.initialMessage.context }),
-                          },
-                        }),
-                    createdBy: "user",
-                    creationSource: input.creationSource ?? "web",
-                  }).pipe(Effect.provide(intakeContext)),
+                  messageSentFrom.pipe(
+                    Effect.flatMap((sentFrom) =>
+                      ThreadMessageIntake.launchThread({
+                        commandId: input.commandId,
+                        ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                        ...(input.reuseExistingThread === undefined
+                          ? {}
+                          : { reuseExistingThread: input.reuseExistingThread }),
+                        projectId: input.projectId,
+                        title: input.title,
+                        ...(input.generateTitle === undefined
+                          ? {}
+                          : { generateTitle: input.generateTitle }),
+                        modelSelection: input.modelSelection,
+                        runtimeMode: input.runtimeMode,
+                        interactionMode: input.interactionMode,
+                        workspaceStrategy: input.workspaceStrategy,
+                        ...(input.initialMessage === undefined
+                          ? {}
+                          : {
+                              initialMessage: {
+                                ...(input.initialMessage.messageId === undefined
+                                  ? {}
+                                  : { messageId: input.initialMessage.messageId }),
+                                text: input.initialMessage.text,
+                                attachments: input.initialMessage.attachments,
+                                ...(input.initialMessage.context === undefined
+                                  ? {}
+                                  : { context: input.initialMessage.context }),
+                                sentFrom,
+                              },
+                            }),
+                        createdBy: "user",
+                        creationSource: input.creationSource ?? "web",
+                      }),
+                    ),
+                    Effect.provide(intakeContext),
+                  ),
                 )
                 .pipe(
                   // A resumed launch is a retry of one already counted.
@@ -3554,6 +3607,7 @@ export const layer = Layer.unwrap(
           Effect.provide(
             layerWsRpc(
               session,
+              readMessageSentFrom(request),
               clientAnalyticsProps,
               serverBrowser,
               reportProfiles,

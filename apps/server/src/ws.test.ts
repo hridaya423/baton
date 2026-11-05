@@ -30,7 +30,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { Headers } from "effect/http";
+import { Headers, HttpServerRequest } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
@@ -129,12 +129,28 @@ import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
   layerWsRpc,
+  readMessageSentFrom,
   resolveOpenDiscoveryForConfig,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
   WS_RPC_SERVER_OPTIONS,
   withLateConfigDiscovery,
 } from "./ws.ts";
+
+it("records the dialed host and drops unknown client values in sentFrom", () => {
+  const request = HttpServerRequest.fromWeb(
+    new Request(
+      "http://127.0.0.1:3773/ws?clientSurface=mobile&clientOs=iOS&clientDeviceType=unknown&connectionMethod=relay",
+      { headers: { host: "box.example.ts.net:3773" } },
+    ),
+  );
+  assert.deepEqual(readMessageSentFrom(request), {
+    surface: "mobile",
+    os: "iOS",
+    connectionMethod: "relay",
+    host: "box.example.ts.net:3773",
+  });
+});
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
@@ -887,6 +903,7 @@ it.effect.each([
               scopes: [],
             },
             {},
+            {},
             yield* ServerBrowser.ServerBrowser,
             () => Effect.void,
             { secretReferences: true },
@@ -1106,6 +1123,7 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
             method: "browser-session-cookie",
             scopes: [],
           },
+          {},
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,

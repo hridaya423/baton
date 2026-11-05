@@ -19,6 +19,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
+  buildDevRunnerState,
   checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
   findFirstAvailableOffset,
@@ -70,6 +71,47 @@ const devServerInput = {
 } as const;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
+  describe("buildDevRunnerState", () => {
+    const env = { PORT: "5760", T3CODE_PORT: "13800", T3CODE_DEV_AUTH_TOKEN: "a".repeat(64) };
+
+    it("gives a pairing link per hostname when a reusable token is set", () => {
+      const state = buildDevRunnerState({
+        mode: "dev",
+        pid: 42,
+        baseDir: "/tmp/wt/.t3",
+        env,
+        tailnetUrl: "https://box.example.ts.net:5760/",
+      });
+      assert.equal(state.localUrl, "http://localhost:5760/");
+      assert.equal(state.localPairingUrl, `http://localhost:5760/pair#token=${"a".repeat(64)}`);
+      assert.equal(
+        state.tailnetPairingUrl,
+        `https://box.example.ts.net:5760/pair#token=${"a".repeat(64)}`,
+      );
+    });
+
+    it("leaves links out when there is no web stack or no token", () => {
+      const serverOnly = buildDevRunnerState({
+        mode: "dev:server",
+        pid: 42,
+        baseDir: "/tmp/wt/.t3",
+        env,
+        tailnetUrl: undefined,
+      });
+      assert.equal(serverOnly.webPort, null);
+      assert.equal(serverOnly.localPairingUrl, null);
+      const noToken = buildDevRunnerState({
+        mode: "dev",
+        pid: 42,
+        baseDir: "/tmp/wt/.t3",
+        env: { PORT: "5760", T3CODE_PORT: "13800" },
+        tailnetUrl: undefined,
+      });
+      assert.equal(noToken.localUrl, "http://localhost:5760/");
+      assert.equal(noToken.localPairingUrl, null);
+    });
+  });
+
   describe("createDevRunnerEnv", () => {
     it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
       Effect.gen(function* () {

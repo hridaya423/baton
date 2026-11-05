@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../Orchestrator.ts";
+import { formatSentFromContext } from "../sentFromContext.ts";
 import { userFacingDispatchErrorMessage } from "../UserFacingErrors.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { subagentInput } from "./fixtures/subagent/input.ts";
@@ -22,6 +23,7 @@ import {
   CLAUDE_MODEL_SELECTION,
   materializeFixtureInput,
   projectionFor,
+  SIMPLE_PROMPT,
 } from "./fixtures/shared.ts";
 import {
   findReplayFixture,
@@ -108,6 +110,59 @@ describe("Claude Agent SDK replay fixtures", () => {
       );
     }),
   );
+
+  const simpleFixture = findReplayFixture("simple");
+  const simpleClaude = simpleFixture?.providers.find(
+    (provider) => provider.driver === "claudeAgent",
+  );
+  if (simpleFixture !== undefined && simpleClaude !== undefined) {
+    it.effect("tells the provider where a client-sent message came from", () => {
+      const sentFrom = {
+        surface: "mobile",
+        os: "iOS",
+        deviceType: "phone",
+        connectionMethod: "relay",
+        host: "127.0.0.1:3773",
+        serverLabel: "Mainbook",
+      } as const;
+      const prompted = `${formatSentFromContext(sentFrom)}\n\n${SIMPLE_PROMPT}`;
+      return runClaudeReplayFixture({
+        fixtureName: simpleFixture.name,
+        buildInput: () => ({ steps: [{ type: "message", text: SIMPLE_PROMPT, sentFrom }] }),
+        driver: {
+          ...simpleClaude,
+          assertOutput: (result, transcript) => {
+            simpleClaude.assertOutput(result, transcript);
+            const message = projectionFor(result, simpleFixture.name).messages.find(
+              (candidate) => candidate.role === "user",
+            );
+            // The thread shows what the user typed; only the provider sees the context.
+            assert.equal(message?.text, SIMPLE_PROMPT);
+            assert.deepEqual(message?.sentFrom, sentFrom);
+          },
+        },
+        // The replay fails unless the adapter sends exactly this prompt.
+        transformTranscript: (transcript) => ({
+          ...transcript,
+          entries: transcript.entries.map((entry) =>
+            entry.type === "expect_outbound" && entry.label === "prompt.offer:1"
+              ? {
+                  ...entry,
+                  frame: {
+                    type: "prompt.offer",
+                    message: {
+                      type: "user",
+                      message: { role: "user", content: prompted },
+                      parent_tool_use_id: null,
+                    },
+                  },
+                }
+              : entry,
+          ),
+        }),
+      });
+    });
+  }
 
   const afterRootFixture = findReplayFixture("claude_background_subagent_after_root");
   const afterRootProvider = afterRootFixture?.providers[0];
