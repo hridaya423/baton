@@ -35,11 +35,16 @@ import { Tool } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
+import {
+  CAPTAIN_INSTRUCTIONS,
+  crewInstructions,
+} from "../../apps/server/src/captains/captainInstructions.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import * as Contracts from "@t3tools/contracts";
 import {
+  CaptainOrderId,
   EnvironmentId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   PullRequestState,
@@ -51,6 +56,7 @@ import { buildCodexAdditionalContext } from "../../apps/server/src/provider/Code
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
+import { CaptainToolkit } from "../../apps/server/src/mcp/toolkits/captain/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -285,6 +291,11 @@ export const McpToolUseCase = Schema.Struct({
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
+    /**
+     * The thread is a captain, or crew on one of its orders. T3 lists that role's tools, and the
+     * first message carries T3's captain instructions, or the crew instructions after `prompt`.
+     */
+    captain: Schema.optional(Schema.Literals(["captain", "crew"])),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -432,6 +443,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  CaptainToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -477,8 +489,19 @@ const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
   savesPastedSecrets && name === "request_secret" && typeof input.value === "string";
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
-const visibleT3Tools = (options: { readonly links?: boolean }) =>
-  t3Tools.filter((tool) => options.links === true || !hiddenWhileLinksOff.has(tool.name));
+// Only a captain thread lists the order tools, and only its crew list crew_report.
+const captainTools = enabledWhen(McpInvocationContext.visibleToCaptains);
+const crewTools = enabledWhen(McpInvocationContext.visibleToCrew);
+const visibleT3Tools = (options: {
+  readonly links?: boolean;
+  readonly captain?: "captain" | "crew";
+}) =>
+  t3Tools.filter(
+    (tool) =>
+      (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      (options.captain === "captain" || !captainTools.has(tool.name)) &&
+      (options.captain === "crew" || !crewTools.has(tool.name)),
+  );
 
 /**
  * T3's Claude Code options for an eval thread: its system prompt append and its hooks. `device` says
@@ -583,6 +606,7 @@ export const buildBase = (
     readonly model: Model;
     readonly keepUserInstructions: boolean;
     readonly links?: boolean;
+    readonly captain?: "captain" | "crew";
     /** A native subagent starts from its task: T3 appends nothing to its system prompt. */
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
@@ -674,6 +698,7 @@ const buildCodexBase = (
     readonly keepUserInstructions: boolean;
     readonly effort?: string | undefined;
     readonly links?: boolean;
+    readonly captain?: "captain" | "crew";
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
   },
@@ -967,6 +992,18 @@ export const buildMessages = (sample: Sample) => {
   ];
   const reminders = base.reminders.toSpliced(base.gitStatusAt, 0, reminder(gitStatus(testCase)));
   push("user", ...reminders, ...notes.flatMap((note) => (note ? [reminder(note)] : [])));
+  if (testCase.setup.captain === "captain") push("user", text(CAPTAIN_INSTRUCTIONS));
+  let crewPending = testCase.setup.captain === "crew";
+  const withCrewInstructions = (value: string) => {
+    if (!crewPending) return value;
+    crewPending = false;
+    const order = {
+      id: CaptainOrderId.make("order:eval"),
+      kind: "change",
+      doneCheck: null,
+    } as const;
+    return `${value}\n\n${crewInstructions("Evening captain", order)}`;
+  };
   const toolSearch = findTool(base, "ToolSearch")?.name ?? "ToolSearch";
   let nextId = 0;
   for (const turn of priorTurns) {
@@ -998,7 +1035,9 @@ export const buildMessages = (sample: Sample) => {
           : (sample.priorResults.get(prior) ?? result);
       push("user", toolResult(id, replayed));
     }
-    if (turn.text) push(turn.role, text(turn.text));
+    if (turn.text) {
+      push(turn.role, text(turn.role === "user" ? withCrewInstructions(turn.text) : turn.text));
+    }
   }
   const userText =
     testCase.promptContext === undefined
@@ -1008,7 +1047,7 @@ export const buildMessages = (sample: Sample) => {
     sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
-    push("user", text(role === "delegated-child" ? childPrompt() : prompt));
+    push("user", text(withCrewInstructions(role === "delegated-child" ? childPrompt() : prompt)));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {
     push("user", reminder(`SubagentStart hook additional context: ${base.subagentContext}`));
@@ -1115,6 +1154,12 @@ export const t3Default = (
           };
         }),
       };
+    case "order_create": {
+      const n = sample.nextTask++;
+      return { orderId: `order:${n}`, position: n, state: "running" };
+    }
+    case "crew_report":
+      return { orderId: "order:eval", state: input.status === "done" ? "done" : "running" };
     case "orchestrator_capabilities":
       return {
         inheritedProviderInstanceId: "claudeAgent",
@@ -2340,6 +2385,7 @@ const main = Effect.gen(function* () {
     role: McpToolUseCase["setup"]["role"],
     deviceAccess: boolean,
     links: boolean,
+    captain: "captain" | "crew" | undefined,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2349,6 +2395,7 @@ const main = Effect.gen(function* () {
               keepUserInstructions,
               effort: flags.effort,
               links,
+              ...(captain === undefined ? {} : { captain }),
               deviceAccess,
             }),
           ),
@@ -2360,6 +2407,7 @@ const main = Effect.gen(function* () {
               keepUserInstructions,
               nativeSubagent: role === "native-subagent",
               links,
+              ...(captain === undefined ? {} : { captain }),
               deviceAccess,
             });
             return role === "native-subagent"
@@ -2371,18 +2419,27 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}`;
-  const base = yield* buildFor("top", true, false);
-  const bases = new Map<string, Base>([["top:true:false", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.captain ?? ""}`;
+  const base = yield* buildFor("top", true, false, undefined);
+  const bases = new Map<string, Base>([["top:true:false:", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", access, links] = key.split(":") as [
+    const [role = "top", access, links, captain] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, access === "true", links === "true"));
+    bases.set(
+      key,
+      yield* buildFor(
+        role,
+        access === "true",
+        links === "true",
+        captain === "captain" || captain === "crew" ? captain : undefined,
+      ),
+    );
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";
