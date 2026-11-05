@@ -47,7 +47,10 @@ import {
   useNativeColumnLayoutMetrics,
   useNativeLayoutMetrics,
 } from "../../native/native-layout-metrics";
-import { useWorkspaceListEmptyTopInset } from "../layout/workspace/workspace-list-insets";
+import {
+  useWorkspaceListBarInset,
+  useWorkspaceListEmptyTopInset,
+} from "../layout/workspace/workspace-list-insets";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
@@ -68,6 +71,7 @@ import {
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
+import { useThreadListDrag } from "../threads/thread-list-drag";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
@@ -263,6 +267,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const homeScrollGesture = useNativeGesture();
   const insets = useSafeAreaInsets();
   const emptyTopInset = useWorkspaceListEmptyTopInset();
+  const listBarInset = useWorkspaceListBarInset();
   const { fabClearance } = useAndroidControlSizing();
   const screenMetrics = useNativeLayoutMetrics();
   const contentSideInsets = usesNativeWorkspaceColumns
@@ -499,6 +504,22 @@ export function HomeScreen(props: HomeScreenProps) {
     onSelectThread(thread);
   };
   useThreadJumpShortcuts(threadListV2Items, selectThread);
+  const drag = useThreadListDrag({
+    listRef,
+    estimatedRowHeight: ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT,
+    items: threadListV2Items,
+    workingShelfEnabled,
+    onMoveThread: props.onMoveThread,
+    // iOS lays the list under the translucent header and bottom toolbar.
+    edgeInsets:
+      Platform.OS === "ios"
+        ? {
+            top: listBarInset,
+            bottom: iosBottomClearance,
+            scrollInsetTop: insets.top,
+          }
+        : undefined,
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
@@ -628,6 +649,7 @@ export function HomeScreen(props: HomeScreenProps) {
         }
         canMoveUp={item.canMoveUp}
         canMoveDown={item.canMoveDown}
+        dragTarget={drag.target}
         onSnoozeThread={handleSnoozeThread}
         onUnsnoozeThread={handleUnsnoozeThread}
         onUnsettleThread={handleUnsettleThread}
@@ -794,6 +816,7 @@ export function HomeScreen(props: HomeScreenProps) {
               <AnimatedLegendList
                 itemLayoutAnimation={sidebarSurface ? THREAD_SIDEBAR_ROW_LAYOUT : undefined}
                 ref={listRef}
+                {...drag.listProps}
                 onLoad={() => activateVisibleRows(threadListV2Items)}
                 onTouchStart={(event) => trackListTouches(event, true)}
                 onTouchEnd={(event) => trackListTouches(event, false)}
@@ -858,6 +881,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 }}
               />
             </GestureDetector>
+            {drag.overlay}
           </SwipeableScrollGateProvider>
         </View>
       </ScreenContent>

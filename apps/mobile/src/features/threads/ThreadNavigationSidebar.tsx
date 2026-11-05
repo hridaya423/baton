@@ -14,6 +14,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
+import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { THREAD_SIDEBAR_ROW_LAYOUT } from "./threadListAnimations";
 import { useAtomValue } from "@effect/atom-react";
@@ -48,7 +49,10 @@ import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useFabScroll } from "../home/FabScrollContext";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
-import { WORKSPACE_LIST_SCROLL_INSETS } from "../layout/workspace/workspace-list-insets";
+import {
+  useWorkspaceListBarInset,
+  WORKSPACE_LIST_SCROLL_INSETS,
+} from "../layout/workspace/workspace-list-insets";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
@@ -58,6 +62,7 @@ import {
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
+import { useThreadListDrag } from "./thread-list-drag";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import { ThreadPrDemandProvider } from "../../state/thread-pr-demand";
@@ -79,6 +84,8 @@ type SidebarListItem =
       readonly hiddenCount: number;
       readonly state?: "loading" | "failed";
     };
+
+const SIDEBAR_ESTIMATED_ROW_HEIGHT = 64;
 
 interface ThreadNavigationSidebarProps {
   readonly width: number;
@@ -365,6 +372,16 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     }
     return false;
   };
+  const listRef = useRef<LegendListRef>(null);
+  const listBarInset = useWorkspaceListBarInset();
+  const drag = useThreadListDrag({
+    listRef,
+    estimatedRowHeight: SIDEBAR_ESTIMATED_ROW_HEIGHT,
+    items: listItems,
+    workingShelfEnabled,
+    onMoveThread: moveThread,
+    edgeInsets: Platform.OS === "ios" ? { top: listBarInset, bottom: insets.bottom } : undefined,
+  });
   const renderListItem = ({ item }: { readonly item: SidebarListItem }) => {
     switch (item.type) {
       case "v2-pending": {
@@ -466,6 +483,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}
+            dragTarget={drag.target}
             onSnoozeThread={snoozeThread}
             onUnsnoozeThread={unsnoozeThread}
             onUnsettleThread={unsettleThread}
@@ -584,15 +602,18 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
               <AnimatedLegendList
                 renderScrollComponent={NativeScrollView}
                 itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
+                ref={listRef}
+                {...drag.listProps}
                 data={listItems}
                 drawDistance={500}
-                estimatedItemSize={64}
+                estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
                 extraData={listExtraData}
                 getItemType={(item) => item.type}
                 itemsAreEqual={sidebarItemsAreEqual}
                 keyExtractor={(item) => item.key}
                 renderItem={renderListItem}
                 {...WORKSPACE_LIST_SCROLL_INSETS}
+                scrollToOverflowEnabled
                 contentContainerStyle={[
                   styles.threadListContent,
                   {
@@ -610,6 +631,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
+            {drag.overlay}
           </SwipeableScrollGateProvider>
           <ThreadUndoNotice visible={props.visible} />
         </View>
@@ -639,9 +661,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
               {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- The Android sidebar has no native header to register with. */}
               <AnimatedLegendList
                 itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
+                ref={listRef}
+                {...drag.listProps}
                 data={listItems}
                 drawDistance={500}
-                estimatedItemSize={64}
+                estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
                 extraData={listExtraData}
                 getItemType={(item) => item.type}
                 itemsAreEqual={sidebarItemsAreEqual}
@@ -663,6 +687,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
+            {drag.overlay}
           </SwipeableScrollGateProvider>
         )}
       </View>
