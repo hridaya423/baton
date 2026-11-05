@@ -43,6 +43,7 @@ export const toBoardOrder = (order: CaptainOrder): CaptainBoardOrder => ({
             captainReviewThreadId(order.id, index + 1),
           ),
         },
+  land: order.land,
   createdAt: order.createdAt,
   updatedAt: order.updatedAt,
 });

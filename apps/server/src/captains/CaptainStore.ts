@@ -394,6 +394,7 @@ const make = Effect.gen(function* () {
       UPDATE captains SET charter_json = ${encodeCharter(input.charter)}, updated_at = ${input.at}
       WHERE captain_id = ${input.captainId}
     `.pipe(storage);
+    yield* publishCaptain(input.captainId);
   });
 
   const getCaptain = Effect.fn("CaptainStore.getCaptain")(function* (id: CaptainId) {

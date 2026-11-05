@@ -14,7 +14,7 @@ import {
   openCaptainEscalations,
   reduceCaptainBoard,
 } from "./captainBoard.ts";
-import type { BoardOrderState } from "./captainsM3.ts";
+import type { BoardOrderState } from "./captainOrders.ts";
 
 const AT = "2026-11-05T10:00:00.000Z";
 

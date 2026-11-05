@@ -4,7 +4,7 @@ import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EMPTY_CAPTAIN_BOARD, reduceCaptainBoard } from "./captainBoard.ts";
-import { createCaptainM3Atoms } from "./captainsM3.ts";
+import { createCaptainOrderAtoms } from "./captainOrders.ts";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -14,7 +14,7 @@ export function createCaptainEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
-    ...createCaptainM3Atoms(runtime),
+    ...createCaptainOrderAtoms(runtime),
     /** The environment's captains, their orders and open needs-you items, folded from the stream. */
     board: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:captains:board",

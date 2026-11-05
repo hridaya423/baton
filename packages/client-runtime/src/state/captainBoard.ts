@@ -9,7 +9,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
-import type { BoardOrderState } from "./captainsM3.ts";
+import type { BoardOrderState } from "./captainOrders.ts";
 
 export type { BoardOrderState };
 

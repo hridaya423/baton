@@ -1,6 +1,7 @@
 import type {
   Captain,
   CaptainCharter,
+  CaptainCharterPatch,
   CaptainOrderDelivery,
   EnvironmentId,
   RuntimeMode,
@@ -35,11 +36,6 @@ import { useScopedSettings } from "./useScopedSettings";
 const DELIVERIES: ReadonlyArray<CaptainOrderDelivery> = ["none", "branch", "pr", "merge"];
 
 type CharterNumberKey = "crewCap" | "retryLimit" | "stallMinutes" | "verifyTimeoutMinutes";
-
-function withoutReviewModel(charter: CaptainCharter): CaptainCharter {
-  const { reviewModel: _reviewModel, ...rest } = charter;
-  return rest;
-}
 
 function CharterNumberRow(props: {
   readonly title: string;
@@ -83,7 +79,7 @@ function CharterNumberRow(props: {
 function ReviewModelRow(props: {
   readonly environmentId: EnvironmentId;
   readonly charter: CaptainCharter;
-  readonly onChange: (charter: CaptainCharter) => Promise<boolean>;
+  readonly onChange: (patch: CaptainCharterPatch) => Promise<boolean>;
 }) {
   const { environmentId, charter, onChange } = props;
   const settings = useScopedSettings();
@@ -111,7 +107,7 @@ function ReviewModelRow(props: {
           <SettingResetButton
             label="review model"
             tooltip="Use the crew's model"
-            onClick={() => void onChange(withoutReviewModel(charter))}
+            onClick={() => void onChange({ reviewModel: null })}
           />
         ) : undefined
       }
@@ -168,7 +164,7 @@ function CaptainCharterSection(props: {
   const updateCaptain = useAtomCommand(captainEnvironment.updateCaptain);
   const paused = captain.status === "paused";
 
-  const saveCharter = async (next: CaptainCharter) => {
+  const saveCharter = async (next: CaptainCharterPatch) => {
     const result = await updateCaptain({
       environmentId,
       input: { captainId: captain.id, charter: next },
