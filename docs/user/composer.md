@@ -308,6 +308,21 @@ its progress.
   stop the turn only when it is working on the goal. Other goal commands wait for
   the turn to end.
 
+## Design mode
+
+Turn on **Design** in the composer, from the command palette (**Toggle Design mode**), or with
+the **Toggle Design mode** shortcut, then describe what you want, for example "a landing page for
+my tea shop". The agent writes a brief, researches a different reference for each of three or
+four directions, and has an agent per direction make a mockup. It shows them side by side and
+asks you to pick or comment. It builds only after you pick, then has a fresh agent score the
+build against the mockup and repairs it.
+
+- The mockups use an image model when one is set up in Settings, otherwise an HTML mockup.
+- Rounds are kept in `.baton/design/` in the project, which git ignores. Reply in the same
+  thread to continue a round.
+- Design stays on for the thread until you turn it off. A plain question gets a plain answer.
+- On mobile, a thread's Design setting is kept, but the toggle is on web and desktop.
+
 ## Context in your message
 
 Context you attach lands where your cursor is, as a chip inside your text: a terminal excerpt,

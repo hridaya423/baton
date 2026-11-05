@@ -40,6 +40,7 @@ import {
   t3CrewRoleInstructions,
   t3ReviewerRoleInstructions,
   t3RolePrompt,
+  t3TurnInstructions,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { reviewerBrief } from "../../apps/server/src/captains/captainMessages.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
@@ -298,6 +299,8 @@ export const McpToolUseCase = Schema.Struct({
      * role's tools, and every user message carries that role's instructions as T3 sends them.
      */
     captain: Schema.optional(Schema.Literals(["captain", "crew", "reviewer"])),
+    /** The composer's Design toggle is on: every user message carries the design-mode instructions. */
+    design: Schema.optional(Schema.Boolean),
     /** A reviewer's first message, built by T3 from the order and its diff. Leave `prompt` empty. */
     reviewBrief: Schema.optional(
       Schema.Struct({
@@ -1024,8 +1027,12 @@ export const buildMessages = (sample: Sample) => {
             orderId: "order:eval",
           }),
         }[testCase.setup.captain];
+  const turnInstructions = t3TurnInstructions({
+    roleInstructions,
+    designMode: testCase.setup.design,
+  });
   const withRoleInstructions = (value: string) =>
-    roleInstructions === undefined ? value : t3RolePrompt(value, roleInstructions);
+    turnInstructions === undefined ? value : t3RolePrompt(value, turnInstructions);
   const toolSearch = findTool(base, "ToolSearch")?.name ?? "ToolSearch";
   let nextId = 0;
   for (const turn of priorTurns) {
