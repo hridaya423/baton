@@ -121,7 +121,10 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { captainHiddenKeysFor, captainMenuState } from "./captain/captainThreads.logic";
+import {
+  captainHiddenKeysFor,
+  captainMenuState,
+} from "@t3tools/client-runtime/state/captainPresentation";
 import { readCaptainSidebarIndex, useCaptainSidebarIndexes } from "../state/captains";
 import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {

@@ -12,7 +12,7 @@ import { Input } from "../ui/input";
 import { Text } from "../ui/text";
 import { captainEnvironment } from "../../state/captains";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { ESCALATION_KIND_LABELS } from "./captainLabels";
+import { ESCALATION_KIND_LABELS } from "@t3tools/client-runtime/state/captainPresentation";
 
 const MAX_ANSWER_CHARS = 2_000;
 

@@ -7,7 +7,7 @@ import {
   captainMenuItems,
   type CaptainMenuActionId,
   type CaptainMenuState,
-} from "./captain/captainThreads.logic";
+} from "@t3tools/client-runtime/state/captainPresentation";
 
 export type ThreadActionMenuId =
   | "find"

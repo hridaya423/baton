@@ -45,7 +45,7 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { captainMenuState } from "../components/captain/captainThreads.logic";
+import { captainMenuState } from "@t3tools/client-runtime/state/captainPresentation";
 import { readCaptainSidebarIndex } from "../state/captains";
 import { useCaptainActions } from "./useCaptainActions";
 import { useCopyToClipboard } from "./useCopyToClipboard";

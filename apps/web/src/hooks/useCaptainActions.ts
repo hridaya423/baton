@@ -4,7 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import type { CaptainMenuActionId } from "../components/captain/captainThreads.logic";
+import type { CaptainMenuActionId } from "@t3tools/client-runtime/state/captainPresentation";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useRightPanelStore } from "../rightPanelStore";
 import { captainEnvironment, readCaptainSidebarIndex } from "../state/captains";

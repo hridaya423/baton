@@ -148,6 +148,35 @@ export function captainBoardColumns(
   };
 }
 
+/** The order a phone reads the board in: what waits on the user first, then what is in flight. */
+const CAPTAIN_BOARD_SECTION_ORDER: ReadonlyArray<CaptainBoardColumn> = [
+  "needs-you",
+  "running",
+  "checking",
+  "queued",
+  "done",
+];
+
+export interface CaptainBoardSection {
+  readonly column: CaptainBoardColumn;
+  readonly orders: ReadonlyArray<CaptainBoardOrder>;
+  /** Only the needs-you section carries the open items no order owns. */
+  readonly looseEscalations: ReadonlyArray<CaptainEscalation>;
+}
+
+/** The board as a list: its non-empty sections, in reading order. */
+export function captainBoardSections(
+  board: CaptainBoardColumns,
+): ReadonlyArray<CaptainBoardSection> {
+  return CAPTAIN_BOARD_SECTION_ORDER.flatMap((column) => {
+    const orders = board.columns[column];
+    const looseEscalations = column === "needs-you" ? board.looseEscalations : [];
+    return orders.length + looseEscalations.length === 0
+      ? []
+      : [{ column, orders, looseEscalations }];
+  });
+}
+
 export type CaptainCrewDot = "running" | "needs-you" | "done";
 
 export interface CaptainCrewEntry {

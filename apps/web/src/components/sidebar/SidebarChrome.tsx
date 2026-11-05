@@ -9,7 +9,7 @@ import { observeResize } from "../../lib/observeResize";
 import { useCaptainBoards } from "../../state/captains";
 import { usePullRequestsSupported } from "../../state/environments";
 import { openNeedsYou } from "../captain/needsYouStore";
-import { countOpenCaptainEscalations } from "../captain/captainThreads.logic";
+import { countOpenCaptainEscalations } from "@t3tools/client-runtime/state/captainPresentation";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,

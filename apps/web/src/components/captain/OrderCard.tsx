@@ -31,7 +31,6 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import { Text } from "../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
-  boardOrderState,
   canDrop,
   canLand,
   canRetry,
@@ -39,8 +38,9 @@ import {
   LAND_DELIVERIES,
   ORDER_KIND_LABELS,
   ORDER_STATE_LABELS,
+  reviewSummary,
   verifySummary,
-} from "./captainLabels";
+} from "@t3tools/client-runtime/state/captainPresentation";
 import { EscalationCard } from "./EscalationCard";
 import { useOpenCrewThread } from "./useOpenCrewThread";
 
@@ -143,7 +143,7 @@ export function OrderCard(props: {
   escalations: ReadonlyArray<CaptainEscalation>;
 }) {
   const { environmentId, captain, order } = props;
-  const state = boardOrderState(order);
+  const state = order.state;
   const crewEnvironmentId = order.environmentId ?? environmentId;
   const linkedNames = useLinkedEnvironments(order.environmentId === null ? null : environmentId);
   const machine =
@@ -175,6 +175,7 @@ export function OrderCard(props: {
   const land = order.land ?? null;
   const verify = order.verify === null ? null : verifySummary(order.verify.exit);
   const review = order.review;
+  const reviewLine = review === null ? null : reviewSummary(review);
   const hasDetails = order.verify !== null || (review !== null && review.findingsCount > 0);
 
   const run = async (
@@ -278,26 +279,13 @@ export function OrderCard(props: {
             </Badge>
           )}
           {review === null ? null : (
-            <Badge
-              size="sm"
-              variant={
-                review.verdict === "approve"
-                  ? "success"
-                  : review.verdict === "reject"
-                    ? "error"
-                    : "info"
-              }
-            >
-              {review.verdict === "approve"
-                ? "Review approved"
-                : review.verdict === "reject"
-                  ? "Review rejected"
-                  : "In review"}
+            <Badge size="sm" variant={reviewLine?.tone ?? "info"}>
+              {reviewLine?.label}
             </Badge>
           )}
-          {review === null || review.verdict === null ? null : (
+          {reviewLine?.findings == null ? null : (
             <Text variant="meta" tone="muted">
-              {review.findingsCount === 1 ? "1 finding" : `${review.findingsCount} findings`}
+              {reviewLine.findings}
             </Text>
           )}
           {review?.sameProvider === true ? (

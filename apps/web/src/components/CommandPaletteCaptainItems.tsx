@@ -9,7 +9,7 @@ import {
   captainMenuState,
   countOpenCaptainEscalations,
   type CaptainMenuActionId,
-} from "./captain/captainThreads.logic";
+} from "@t3tools/client-runtime/state/captainPresentation";
 import { openNeedsYou } from "./captain/needsYouStore";
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "./CommandPalette.logic";
 

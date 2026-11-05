@@ -1,19 +1,18 @@
-import {
-  captainSidebarIndex,
-  EMPTY_CAPTAIN_BOARD,
-  reduceCaptainBoard,
-} from "@t3tools/client-runtime/state/captainBoard";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
+import { captainSidebarIndex, EMPTY_CAPTAIN_BOARD, reduceCaptainBoard } from "./captainBoard.ts";
 import {
+  canDrop,
+  canLand,
+  canRetry,
   captainHiddenKeysFor,
   captainHiddenThreadKeys,
   captainMenuItems,
   captainMenuState,
   captainThreadKey,
-} from "./captainThreads.logic";
+  reviewSummary,
+} from "./captainPresentation.ts";
 
 const env = "environment:a" as EnvironmentId;
 const thread = (id: string, fields: Record<string, unknown> = {}) =>
@@ -97,30 +96,47 @@ describe("captainHiddenThreadKeys", () => {
     );
   });
 
-  it("leaves reviewer threads out of the sidebar list and nests listed crew", () => {
-    const threads = [
-      "thread:captain",
-      "thread:crew",
-      "captain-review:order:1:1",
-      "thread:plain",
-    ].map((id) => ({
-      environmentId: env,
-      projectId: "project:1",
-      id: id as ThreadId,
-      archivedAt: null,
-      lineage: { parentThreadId: null, relationshipToParent: null } as never,
-    }));
-    const visible = filterSidebarV2VisibleThreads(
-      threads,
-      null,
-      new Set(),
-      captainHiddenKeysFor(indexes, threads),
-    );
-    expect(visible.map((entry) => entry.id)).toEqual(["thread:captain", "thread:plain"]);
-  });
-
   it("keeps crew in the list when their captain's row is not there", () => {
     const hidden = captainHiddenThreadKeys(indexes, new Set());
     expect([...hidden]).toEqual([key("captain-review:order:1:1")]);
+  });
+
+  it("gives archived captains no row to nest under", () => {
+    const threads = [
+      { environmentId: env, id: "thread:captain" as ThreadId, archivedAt: "2026-11-05T10:00:00Z" },
+    ];
+    expect([...captainHiddenKeysFor(indexes, threads)]).toEqual([key("captain-review:order:1:1")]);
+  });
+});
+
+describe("order actions and summaries", () => {
+  it("lands only accepted or failed-to-land change orders", () => {
+    expect(canLand("accepted", "change")).toBe(true);
+    expect(canLand("land_failed", "change")).toBe(true);
+    expect(canLand("accepted", "report")).toBe(false);
+    expect(canLand("landed", "change")).toBe(false);
+  });
+
+  it("retries and drops what is in flight, drops what is queued, and neither once finished", () => {
+    expect(canRetry("verify_failed")).toBe(true);
+    expect(canRetry("queued")).toBe(false);
+    expect(canDrop("queued")).toBe(true);
+    expect(canDrop("landed")).toBe(false);
+  });
+
+  it("reads a review's verdict and finding count", () => {
+    const review = (verdict: "approve" | "reject" | null, findingsCount: number) =>
+      reviewSummary({ verdict, findingsCount } as never);
+    expect(review("approve", 0)).toEqual({
+      label: "Review approved",
+      tone: "success",
+      findings: "0 findings",
+    });
+    expect(review("reject", 1)).toEqual({
+      label: "Review rejected",
+      tone: "error",
+      findings: "1 finding",
+    });
+    expect(review(null, 3)).toEqual({ label: "In review", tone: "info", findings: null });
   });
 });

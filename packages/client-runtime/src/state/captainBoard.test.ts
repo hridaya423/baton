@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   captainBoardColumn,
   captainBoardColumns,
+  captainBoardSections,
   captainSidebarIndex,
   EMPTY_CAPTAIN_BOARD,
   openCaptainEscalations,
@@ -134,6 +135,34 @@ describe("captainBoardColumns", () => {
     expect(ids(board.columns.done)).toEqual(["order:4"]);
     expect(ids(board.dropped)).toEqual(["order:5"]);
     expect(board.looseEscalations.map((item) => item.id)).toEqual(["esc:2"]);
+  });
+});
+
+describe("captainBoardSections", () => {
+  it("lists what needs the user first, leaves empty sections out and strays with needs you", () => {
+    const state = reduceCaptainBoard(
+      EMPTY_CAPTAIN_BOARD,
+      snapshot(
+        [captain("captain:a")],
+        [
+          order("order:1", { state: "landed" }),
+          order("order:2", { state: "queued", threadId: null }),
+          order("order:3"),
+          order("order:4", { state: "dropped" }),
+        ],
+        [escalation("esc:1")],
+      ),
+    );
+    const sections = captainBoardSections(captainBoardColumns(state, "captain:a" as never));
+    expect(
+      sections.map((section) => [section.column, section.orders.map((item) => item.id)]),
+    ).toEqual([
+      ["needs-you", []],
+      ["running", ["order:3"]],
+      ["queued", ["order:2"]],
+      ["done", ["order:1"]],
+    ]);
+    expect(sections[0]?.looseEscalations.map((item) => item.id)).toEqual(["esc:1"]);
   });
 });
 

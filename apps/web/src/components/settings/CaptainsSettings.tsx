@@ -17,7 +17,7 @@ import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { captainEnvironment, useCaptainBoards } from "../../state/captains";
 import { useEnvironments } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { DELIVERY_LABELS } from "../captain/captainLabels";
+import { DELIVERY_LABELS } from "@t3tools/client-runtime/state/captainPresentation";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { Button } from "../ui/button";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";

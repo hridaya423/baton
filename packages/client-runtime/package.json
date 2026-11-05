@@ -235,6 +235,10 @@
       "types": "./src/state/captainBoard.ts",
       "default": "./src/state/captainBoard.ts"
     },
+    "./state/captainPresentation": {
+      "types": "./src/state/captainPresentation.ts",
+      "default": "./src/state/captainPresentation.ts"
+    },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"

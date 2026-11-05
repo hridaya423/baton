@@ -19,7 +19,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Text } from "../ui/text";
-import { BOARD_COLUMN_LABELS } from "./captainLabels";
+import { BOARD_COLUMN_LABELS } from "@t3tools/client-runtime/state/captainPresentation";
 import { EscalationCard } from "./EscalationCard";
 import { OrderCard } from "./OrderCard";
 
