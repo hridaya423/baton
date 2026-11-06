@@ -1,10 +1,11 @@
 import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../native/NativeWorkspaceColumns";
 import Constants from "expo-constants";
-import { useState } from "react";
-import { Platform, View } from "react-native";
+import { useRef, useState } from "react";
+import { Platform, View, type ViewInstance } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
 import { BatonMark } from "./BatonMark";
+import { setLaunchTarget, useLaunchPhase } from "./baton/batonLaunchState";
 import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
@@ -27,6 +28,9 @@ export function CompactBrandTitle(
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   const titleOffset = brandTitleOffset();
   const { scale } = useAndroidControlSizing();
+  const launchPhase = useLaunchPhase();
+  const mark = useRef<ViewInstance>(null);
+  const markSize = Math.round(22 * scale);
   const [availableWidth, setAvailableWidth] = useState<number | null>(null);
   // Measured only while the badge shows, so hiding it does not make it look like it fits.
   const [fullWidth, setFullWidth] = useState<number | null>(null);
@@ -49,7 +53,21 @@ export function CompactBrandTitle(
         props.fit && { flexShrink: 0 },
       ]}
     >
-      <BatonMark colorClassName="accent-icon" size={Math.round(22 * scale)} />
+      {/* The cold-launch mark lands here, so this one stays hidden until it has. */}
+      <View
+        ref={mark}
+        style={{ opacity: launchPhase === "done" ? 1 : 0 }}
+        onLayout={
+          launchPhase === "done"
+            ? undefined
+            : () =>
+                mark.current?.measureInWindow((x, y, width) =>
+                  setLaunchTarget({ x, y, size: width }),
+                )
+        }
+      >
+        <BatonMark colorClassName="accent-icon" size={markSize} />
+      </View>
       {/* A logo beside a fixed-size wordmark: it may grow with Dynamic Type, not crowd the bar. */}
       <Text
         allowFontScaling={props.allowFontScaling}
