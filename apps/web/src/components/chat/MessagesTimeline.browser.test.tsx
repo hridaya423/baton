@@ -2057,7 +2057,11 @@ describe("MessagesTimeline transcript view", () => {
             runs: new Set([runId]),
             workGroups: new Set(),
             attempts: new Set(),
-            workGroupState: { scrollPositions: new Map(), expandedEntries: new Set() },
+            workGroupState: {
+              expandedEntries: new Set(),
+              liveCardModes: new Map(),
+              fullGroups: new Set(),
+            },
           },
         },
         true,
@@ -2126,6 +2130,37 @@ describe("MessagesTimeline transcript view", () => {
 
     await screen.rerender(timeline("verbose"));
     await vi.waitFor(() => expect(rowStates()).toEqual(["true", "true"]));
+  });
+
+  it("opens a long tool group inline on its newest calls and shows the rest on request", async () => {
+    setup();
+    const base = baseProps();
+    const runId = RunId.make("run-long-group");
+    const entries = [
+      message("Find the bug"),
+      ...Array.from({ length: 60 }, (_, index) =>
+        work(`command-${index}`, {
+          runId,
+          label: "Ran command",
+          tone: "tool",
+          itemType: "command_execution",
+          command: `echo ${index}`,
+        }),
+      ),
+      message("Fixed it.", { role: "assistant", runId }, "final"),
+    ];
+    await using screen = await renderElement(
+      <MessagesTimeline {...base} timelineEntries={entries} transcriptView="verbose" />,
+    );
+    const group = () => screen.container.querySelector<HTMLElement>('[aria-label="Tool calls"]');
+    await vi.waitFor(() => expect(group()).not.toBeNull());
+    expect(group()!.scrollHeight).toBe(group()!.clientHeight);
+    const more = [...group()!.querySelectorAll("button")].find((button) =>
+      button.textContent?.startsWith("Show 10 earlier"),
+    );
+    expect(more).toBeDefined();
+    await click(more!);
+    await vi.waitFor(() => expect(group()!.textContent).not.toContain("Show 10 earlier"));
   });
 
   it("keeps a thinking-only group as foldable rows above Normal", async () => {

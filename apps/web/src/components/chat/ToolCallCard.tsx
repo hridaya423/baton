@@ -132,21 +132,25 @@ function toolNoun(count: number) {
   return count === 1 ? "tool" : "tools";
 }
 
-/** The working run's calls in one card, so progress is visible without a click. */
+/** The working run's calls in one card: a summary of the latest, the full list when opened, or just the header. */
 export function LiveToolCard({
   entries,
   expanded,
+  closed,
   onToggle,
 }: {
   entries: ReadonlyArray<TimelineWorkEntry>;
   expanded: boolean;
+  /** Closed whole: the one-line header, without the recent-calls summary. */
+  closed: boolean;
   onToggle: () => void;
 }) {
   const stats = toolGroupStats(entries);
-  const tail = liveToolCardTail(entries, LIVE_TAIL_ROWS);
-  const hiddenCount = expanded
-    ? 0
-    : stats.toolCount - tail.filter((entry) => entry.itemType !== "reasoning").length;
+  const showTail = !expanded && !closed;
+  const tail = showTail ? liveToolCardTail(entries, LIVE_TAIL_ROWS) : [];
+  const hiddenCount = showTail
+    ? stats.toolCount - tail.filter((entry) => entry.itemType !== "reasoning").length
+    : 0;
   const label = `Using ${stats.toolCount} ${toolNoun(stats.toolCount)}`;
   return (
     <div className={expanded ? toolCardClassName.top : toolCardClassName.whole}>
@@ -168,7 +172,7 @@ export function LiveToolCard({
         className="rounded-t-xl"
         onToggle={onToggle}
       />
-      {expanded ? null : <ToolCardTail entries={tail} />}
+      {showTail ? <ToolCardTail entries={tail} /> : null}
     </div>
   );
 }

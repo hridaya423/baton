@@ -38,14 +38,19 @@ export function WorkLogBlock({
 
 export function WorkLogList({
   density = "grouped",
+  label,
   children,
 }: {
   density?: "grouped" | "card";
+  label?: string;
   children: ReactNode;
 }) {
   return (
     <RowDensity value={density}>
-      <div className={cn("flex min-w-0 flex-col", density === "grouped" && "gap-1")}>
+      <div
+        {...(label ? { role: "group", "aria-label": label } : {})}
+        className={cn("flex min-w-0 flex-col", density === "grouped" && "gap-1")}
+      >
         {children}
       </div>
     </RowDensity>

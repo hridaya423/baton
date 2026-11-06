@@ -189,7 +189,7 @@ function timelineListStateFor(
 }
 
 function emptyWorkGroupViewState(): WorkGroupViewState {
-  return { scrollPositions: new Map(), expandedEntries: new Set() };
+  return { expandedEntries: new Set(), liveCardModes: new Map(), fullGroups: new Set() };
 }
 
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
