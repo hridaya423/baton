@@ -32,6 +32,7 @@ import {
   DEFAULT_CAPTAIN_CHARTER,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2ThreadCaptainRole,
   type ProjectId,
   type RuntimeMode,
   ThreadId,
@@ -189,6 +190,8 @@ export class CaptainService extends Context.Service<
       input: CaptainBoardInput,
     ) => Stream.Stream<CaptainBoardEvent, CaptainError>;
     readonly release: (captainId: CaptainId) => Effect.Effect<Captain, CaptainError>;
+    /** Brings every captain, crew and reviewer thread's listed role in line with the captain tables. */
+    readonly syncThreadRoles: () => Effect.Effect<void, CaptainError>;
     /** An in-memory answer, for tool visibility. Handlers check the database through the require methods. */
     readonly roleOf: (threadId: ThreadId) => Effect.Effect<CaptainRole | undefined>;
     readonly requireCaptain: (
@@ -361,6 +364,21 @@ const make = Effect.gen(function* () {
 
   const dispatch = (threadId: ThreadId, command: Parameters<typeof threads.dispatch>[0]) =>
     threads.dispatch(command).pipe(Effect.mapError(threadFailure(threadId)));
+
+  const setListedRole = Effect.fn("CaptainService.setListedRole")(function* (
+    threadId: ThreadId,
+    captainRole: OrchestrationV2ThreadCaptainRole | null,
+  ) {
+    const shell = yield* getShell(threadId);
+    if (shell === null || shell.deletedAt !== null) return;
+    if ((shell.captainRole ?? null) === captainRole) return;
+    yield* dispatch(threadId, {
+      type: "thread.captain-role.set",
+      commandId: CommandId.make(`server:captain-role:${yield* newId}`),
+      threadId,
+      captainRole,
+    });
+  });
 
   const assignRole = (
     threadId: ThreadId,
@@ -644,6 +662,7 @@ const make = Effect.gen(function* () {
         createdBy: "agent",
         creationSource: "server",
         groupedUnderThreadId: captain.threadId,
+        captainRole: "crew",
       })
       .pipe(
         Effect.catchCauseIf(
@@ -1784,6 +1803,7 @@ const make = Effect.gen(function* () {
         createdBy: "agent",
         creationSource: "server",
         groupedUnderThreadId: order.threadId ?? captain.threadId,
+        captainRole: "reviewer",
       })
       .pipe(
         Effect.tapError(() => clearRole(review.threadId)),
@@ -2023,6 +2043,7 @@ const make = Effect.gen(function* () {
         { role: "captain", captainId: captain.id },
         T3_CODE_CAPTAIN_ROLE_INSTRUCTIONS,
       );
+      yield* setListedRole(captain.threadId, "captain");
       yield* due.invalidate;
       if (shell.pinnedAt == null) {
         yield* dispatch(captain.threadId, {
@@ -2084,6 +2105,23 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const syncThreadRoles: CaptainService["Service"]["syncThreadRoles"] = Effect.fn(
+    "CaptainService.syncThreadRoles",
+  )(function* () {
+    for (const captain of yield* store.listCaptains({})) {
+      yield* setListedRole(captain.threadId, captain.status === "released" ? null : "captain");
+      for (const order of yield* store.listOrders(captain.id)) {
+        // A remote crew thread lives in its own environment, which lists it there.
+        if (order.threadId !== null && order.environmentId === null) {
+          yield* setListedRole(order.threadId, "crew");
+        }
+        for (let round = 1; round <= (order.review?.round ?? 0); round++) {
+          yield* setListedRole(captainReviewThreadId(order.id, round), "reviewer");
+        }
+      }
+    }
+  });
+
   const release: CaptainService["Service"]["release"] = Effect.fn("CaptainService.release")(
     function* (captainId) {
       const found = yield* store.getCaptain(captainId);
@@ -2093,6 +2131,15 @@ const make = Effect.gen(function* () {
       const at = yield* nowIso;
       yield* store.setCaptainStatus({ captainId, status: "released", at });
       yield* clearRole(found.value.threadId);
+      // Crew keep their role; clients stop nesting them once their captain's role is gone.
+      yield* setListedRole(found.value.threadId, null).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("clearing a released captain's role failed", {
+            captainId,
+            cause: error,
+          }),
+        ),
+      );
       yield* due.invalidate;
       yield* dispatch(found.value.threadId, {
         type: "queue.hold",
@@ -3204,6 +3251,7 @@ const make = Effect.gen(function* () {
     get,
     subscribeBoard,
     release,
+    syncThreadRoles,
     roleOf,
     requireCaptain,
     requireCrew,

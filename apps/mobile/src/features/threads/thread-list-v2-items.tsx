@@ -1256,6 +1256,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <CaptainGlyph
             environmentId={thread.environmentId}
             threadId={thread.id}
+            captainRole={thread.captainRole}
             size={projectIconSize * 0.8}
             tintClassName={
               selected

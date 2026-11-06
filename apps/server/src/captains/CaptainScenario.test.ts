@@ -413,6 +413,9 @@ it.effect(
         creationSource: "web",
       });
       const captain = yield* captains.create({ threadId: captainThreadId });
+      const roleOf = (threadId: ThreadId) =>
+        Effect.map(threads.getThreadShell(threadId), (shell) => shell?.captainRole ?? null);
+      assert.equal(yield* roleOf(captainThreadId), "captain");
 
       const audit = yield* call(
         "order_create",
@@ -628,6 +631,8 @@ it.effect(
       assert.isNotNull(readmeReview);
       const reviewerShell = yield* threads.getThreadShell(readmeReview!.threadId);
       assert.equal(reviewerShell?.groupedUnderThreadId, readmeCrew);
+      assert.equal(reviewerShell?.captainRole, "reviewer");
+      assert.equal(yield* roleOf(readmeCrew), "crew");
       assert.equal(readmeReview?.model.instanceId, "claudeAgent");
       const reviewerBrief = yield* messagesOf(readmeReview!.threadId);
       assert.include(reviewerBrief[0] ?? "", "diff --git a/README.md b/README.md");
@@ -721,5 +726,11 @@ it.effect(
         count: number;
       }>`SELECT COUNT(*) AS count FROM scheduled_tasks`;
       assert.equal(scheduled[0]?.count, 0);
+
+      // Release clears only the captain's role; its crew stop nesting because the captain lost it.
+      yield* captains.release(captain.id);
+      assert.isNull(yield* roleOf(captainThreadId));
+      assert.equal(yield* roleOf(readmeCrew), "crew");
+      assert.equal(yield* roleOf(readmeReview!.threadId), "reviewer");
     }).pipe(Effect.provide(makeLayer())),
 );

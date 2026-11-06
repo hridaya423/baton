@@ -84,9 +84,11 @@ it.effect("makes a thread a captain: pinned, no auto-settle, told what it is on 
       });
       assert.deepEqual(
         harness.commands.map((command) => command.type),
-        ["thread.pin", "thread.auto-settle.set"],
+        ["thread.captain-role.set", "thread.pin", "thread.auto-settle.set"],
       );
-      const settle = harness.commands[1];
+      const listed = harness.commands[0];
+      assert.isTrue(listed?.type === "thread.captain-role.set" && listed.captainRole === "captain");
+      const settle = harness.commands[2];
       assert.isTrue(settle?.type === "thread.auto-settle.set" && settle.enabled === false);
       const entry = yield* roles.get(captainThreadId);
       assert.equal(entry?.role, "captain");

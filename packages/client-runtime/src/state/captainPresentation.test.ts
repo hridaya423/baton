@@ -107,6 +107,32 @@ describe("captainHiddenThreadKeys", () => {
     ];
     expect([...captainHiddenKeysFor(indexes, threads)]).toEqual([key("captain-review:order:1:1")]);
   });
+
+  it("reads roles from the threads before any board has loaded", () => {
+    const listedThread = (id: string, fields: Record<string, unknown>) => ({
+      environmentId: env,
+      id: id as ThreadId,
+      archivedAt: null,
+      ...fields,
+    });
+    const threads = [
+      listedThread("thread:captain", { captainRole: "captain" }),
+      listedThread("thread:crew", { captainRole: "crew", groupedUnderThreadId: "thread:captain" }),
+      listedThread("thread:review", {
+        captainRole: "reviewer",
+        groupedUnderThreadId: "thread:crew",
+      }),
+      // Released: the captain's role is cleared, so its crew list on their own again.
+      listedThread("thread:released", { captainRole: null }),
+      listedThread("thread:orphan", {
+        captainRole: "crew",
+        groupedUnderThreadId: "thread:released",
+      }),
+    ];
+    expect([...captainHiddenKeysFor(new Map(), threads)].sort()).toEqual(
+      [key("thread:crew"), key("thread:review")].sort(),
+    );
+  });
 });
 
 describe("order actions and summaries", () => {

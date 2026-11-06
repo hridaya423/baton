@@ -320,6 +320,16 @@ const make = Effect.gen(function* () {
 
   const start: CaptainReactor["Service"]["start"] = Effect.fn("CaptainReactor.start")(function* () {
     const subscription = yield* captains.subscribeSignals;
+    // Threads from before roles were listed, or whose role write was lost, catch up at boot.
+    yield* forkParked(
+      captains
+        .syncThreadRoles()
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("syncing captain thread roles failed", { cause }),
+          ),
+        ),
+    );
     yield* forkParked(
       Effect.all(
         [

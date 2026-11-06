@@ -1,6 +1,6 @@
 import { useSyncLayout } from "@legendapp/list/react-native";
 import type { CaptainCrewDot } from "@t3tools/client-runtime/state/captainBoard";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationV2ThreadCaptainRole, ThreadId } from "@t3tools/contracts";
 import { useLayoutEffect, useRef } from "react";
 import { Pressable, View } from "react-native";
 import Animated, {
@@ -30,15 +30,16 @@ const DOT_LABEL: Record<CaptainCrewDot, string> = {
   done: "Done",
 };
 
-/** The anchor that marks a captain's thread in a list. */
+/** The anchor that marks a captain's thread in a list, from the thread's own role before the board loads. */
 export function CaptainGlyph(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly captainRole: OrchestrationV2ThreadCaptainRole | null | undefined;
   readonly size: number;
   readonly tintClassName: string;
 }) {
   const captain = useCaptainOfThread(props.environmentId, props.threadId);
-  if (captain === null) return null;
+  if (captain === null && props.captainRole !== "captain") return null;
   return (
     <SymbolView
       name="anchor"

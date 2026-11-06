@@ -206,15 +206,35 @@ export function countOpenCaptainEscalations(boards: ReadonlyMap<EnvironmentId, C
 
 const NO_HIDDEN_KEYS: ReadonlySet<string> = new Set();
 
-/** `captainHiddenThreadKeys` for the threads a list was given; archived ones have no row to nest under. */
+/**
+ * The keys a list leaves out of the threads it was given. Roles on the threads decide first, so
+ * nothing flashes before the board loads; the board fills in for servers that send no roles.
+ * Archived captains have no row to nest under.
+ */
 export function captainHiddenKeysFor(
   indexes: ReadonlyMap<EnvironmentId, CaptainSidebarIndex>,
-  threads: ReadonlyArray<Pick<EnvironmentThreadShell, "environmentId" | "id" | "archivedAt">>,
+  threads: ReadonlyArray<
+    Pick<EnvironmentThreadShell, "environmentId" | "id" | "archivedAt"> &
+      Partial<Pick<EnvironmentThreadShell, "captainRole" | "groupedUnderThreadId">>
+  >,
 ): ReadonlySet<string> {
-  if (indexes.size === 0) return NO_HIDDEN_KEYS;
   const listed = new Set<string>();
+  const listedCaptains = new Set<string>();
   for (const thread of threads) {
-    if (thread.archivedAt === null) listed.add(captainThreadKey(thread.environmentId, thread.id));
+    if (thread.archivedAt !== null) continue;
+    const key = captainThreadKey(thread.environmentId, thread.id);
+    listed.add(key);
+    if (thread.captainRole === "captain") listedCaptains.add(key);
   }
-  return captainHiddenThreadKeys(indexes, listed);
+  const hidden = new Set(indexes.size === 0 ? [] : captainHiddenThreadKeys(indexes, listed));
+  for (const thread of threads) {
+    const nestedUnderListedCaptain =
+      thread.captainRole === "crew" &&
+      thread.groupedUnderThreadId != null &&
+      listedCaptains.has(captainThreadKey(thread.environmentId, thread.groupedUnderThreadId));
+    if (thread.captainRole === "reviewer" || nestedUnderListedCaptain) {
+      hidden.add(captainThreadKey(thread.environmentId, thread.id));
+    }
+  }
+  return hidden.size === 0 ? NO_HIDDEN_KEYS : hidden;
 }

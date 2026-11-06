@@ -481,6 +481,10 @@ const LenientThreadSettleReason = Schema.NullOr(OrchestrationV2ThreadSettleReaso
   Schema.catchDecoding(() => Effect.succeedSome(null)),
 );
 
+/** A thread's part in a captain's crew, so clients can nest or hide it before the board loads. */
+export const OrchestrationV2ThreadCaptainRole = Schema.Literals(["captain", "crew", "reviewer"]);
+export type OrchestrationV2ThreadCaptainRole = typeof OrchestrationV2ThreadCaptainRole.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -505,6 +509,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   /** Thread this one is grouped under in thread lists: the thread whose agent
       launched it through T3 MCP tools, or one the user grouped it with. */
   groupedUnderThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  /** Set by the server from its captains; absent or null on threads no captain uses. */
+  captainRole: Schema.optional(Schema.NullOr(OrchestrationV2ThreadCaptainRole)),
   forkedFrom: Schema.NullOr(
     Schema.Union([
       Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
@@ -2145,6 +2151,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
   /** Clients nest the thread under this one. Omitted by older servers. */
   groupedUnderThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  /** Omitted by servers without captains; clients then read roles from the captain board. */
+  captainRole: Schema.optional(Schema.NullOr(OrchestrationV2ThreadCaptainRole)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
@@ -2987,6 +2995,8 @@ export const OrchestrationV2Command = Schema.Union([
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     /** The calling thread when an agent launches this one through T3 MCP tools. */
     groupedUnderThreadId: Schema.optional(ThreadId),
+    /** Only the server sets this, for a captain's crew or reviewer. */
+    captainRole: Schema.optional(OrchestrationV2ThreadCaptainRole),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
@@ -3459,6 +3469,13 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  // Captains set and clear their threads' roles; internal so no client can claim one.
+  Schema.Struct({
+    type: Schema.Literal("thread.captain-role.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    captainRole: Schema.NullOr(OrchestrationV2ThreadCaptainRole),
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

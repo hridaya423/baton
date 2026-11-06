@@ -1,15 +1,22 @@
 import { AnchorIcon } from "lucide-react";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationV2ThreadCaptainRole, ThreadId } from "@t3tools/contracts";
 
 import { useCaptainNeedsYou, useCaptainOfThread } from "../../state/captains";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-/** The anchor that marks a captain's row, in place of nothing on an ordinary thread's. */
-export function CaptainRowGlyph(props: { environmentId: EnvironmentId; threadId: ThreadId }) {
+/**
+ * The anchor that marks a captain's row, in place of nothing on an ordinary thread's. The thread's
+ * own role shows it before the board loads; the board adds whether the captain is paused.
+ */
+export function CaptainRowGlyph(props: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  captainRole?: OrchestrationV2ThreadCaptainRole | null | undefined;
+}) {
   const captain = useCaptainOfThread(props.environmentId, props.threadId);
-  if (captain === null) return null;
-  const paused = captain.status === "paused";
+  if (captain === null && props.captainRole !== "captain") return null;
+  const paused = captain?.status === "paused";
   return (
     <Tooltip>
       <TooltipTrigger

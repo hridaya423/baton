@@ -10,6 +10,7 @@ import {
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2DelegatedFrom,
+  type OrchestrationV2ThreadCaptainRole,
   type OrchestrationV2LinkOrigin,
   type OrchestrationV2MessageSentFrom,
   type OrchestrationV2ProviderThreadNativeMetadata,
@@ -108,6 +109,7 @@ export interface ThreadLaunchInput {
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
   /** The calling thread when an agent launches this one through T3 MCP tools. */
   readonly groupedUnderThreadId?: ThreadId;
+  readonly captainRole?: OrchestrationV2ThreadCaptainRole;
 }
 
 type PreparationInput = Pick<
@@ -957,6 +959,7 @@ const make = Effect.gen(function* () {
                 ...(input.groupedUnderThreadId === undefined
                   ? {}
                   : { groupedUnderThreadId: input.groupedUnderThreadId }),
+                ...(input.captainRole === undefined ? {} : { captainRole: input.captainRole }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
               });

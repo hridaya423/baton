@@ -1315,7 +1315,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 </span>
               )}
               {draftIndicator}
-              <CaptainRowGlyph environmentId={thread.environmentId} threadId={thread.id} />
+              <CaptainRowGlyph
+                environmentId={thread.environmentId}
+                threadId={thread.id}
+                captainRole={thread.captainRole}
+              />
               {title}
               <CaptainRowNeedsYou environmentId={thread.environmentId} threadId={thread.id} />
               {multiline ? titleLineIcons : null}
@@ -1624,7 +1628,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              <CaptainRowGlyph environmentId={thread.environmentId} threadId={thread.id} />
+              <CaptainRowGlyph
+                environmentId={thread.environmentId}
+                threadId={thread.id}
+                captainRole={thread.captainRole}
+              />
               {title}
               <CaptainRowNeedsYou environmentId={thread.environmentId} threadId={thread.id} />
               {isRegeneratingTitle ? (

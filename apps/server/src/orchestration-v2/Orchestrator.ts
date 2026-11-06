@@ -569,6 +569,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
+    case "thread.captain-role.set":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
@@ -2892,6 +2893,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.groupedUnderThreadId === undefined
         ? {}
         : { groupedUnderThreadId: command.groupedUnderThreadId }),
+      ...(command.captainRole === undefined ? {} : { captainRole: command.captainRole }),
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
@@ -3164,6 +3166,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unpin"
           | "thread.pin.reorder"
           | "thread.tag.set"
+          | "thread.captain-role.set"
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
@@ -3704,6 +3707,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: thread.updatedAt,
           };
         }
+        case "thread.captain-role.set":
+          // A role is how the thread is listed, not activity, so it does not move the thread.
+          return { ...thread, captainRole: command.captainRole };
         case "thread.tag.set": {
           const current = thread.tags ?? [];
           return {
@@ -4105,6 +4111,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.active-reordered" as const;
         case "thread.tag.set":
           return "thread.tags-updated" as const;
+        case "thread.captain-role.set":
+          return "thread.metadata-updated" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
@@ -13296,6 +13304,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin.reorder":
       case "thread.active.reorder":
       case "thread.tag.set":
+      case "thread.captain-role.set":
       case "thread.mark-unread":
       case "thread.metadata.update":
       case "thread.pull-request.link":
