@@ -186,6 +186,130 @@ function formatProviderList(providers: ReadonlyArray<Pick<ServerProvider, "drive
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
+export interface ProviderUpdateToastView {
+  readonly type: "info" | "loading" | "success" | "warning" | "error";
+  readonly title: string;
+  readonly description: string;
+  /** Zero keeps the toast until dismissed. */
+  readonly timeout: number;
+  readonly action:
+    | { readonly kind: "update"; readonly label: string; readonly disabled: boolean }
+    | { readonly kind: "copy" }
+    | null;
+  /** The manual command, shown only where this client cannot run the update itself. */
+  readonly command: string | null;
+}
+
+export interface ProviderUpdateToastInput {
+  readonly provider: ServerProvider;
+  /** This client saw the update run, so a terminal state belongs to it and not to an earlier run. */
+  readonly runSeen: boolean;
+  /** Set when the update request itself failed before the server reported a state. */
+  readonly requestFailure: string | null;
+  /** Null when the update can be run here; otherwise why it cannot. */
+  readonly manualReason: string | null;
+}
+
+const PROVIDER_UPDATE_SUCCESS_TOAST_MS = 5_000;
+
+/** What the update toast shows for one provider, or null when it has nothing left to say. */
+export function getProviderUpdateToastView(
+  input: ProviderUpdateToastInput,
+): ProviderUpdateToastView | null {
+  const { provider, runSeen, requestFailure, manualReason } = input;
+  const name = PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
+  const advisory = provider.versionAdvisory;
+  const command = advisory?.updateCommand ?? null;
+  const state = provider.updateState;
+  const canRunHere = manualReason === null;
+  const retry = {
+    kind: "update",
+    label: "Try again",
+    disabled: false,
+  } as const;
+  const manual = command === null ? null : ({ kind: "copy" } as const);
+
+  if (isProviderUpdateActive(provider)) {
+    return {
+      type: "loading",
+      title: `Updating ${name}`,
+      description: state?.message ?? "Starting update",
+      timeout: 0,
+      action: { kind: "update", label: "Updating…", disabled: true },
+      command: null,
+    };
+  }
+  if (runSeen && state?.status === "succeeded") {
+    return {
+      type: "success",
+      title: provider.version ? `${name} updated to ${provider.version}` : `${name} updated`,
+      description: "New sessions will use the updated provider.",
+      timeout: PROVIDER_UPDATE_SUCCESS_TOAST_MS,
+      action: null,
+      command: null,
+    };
+  }
+  if (runSeen && (state?.status === "failed" || state?.status === "unchanged")) {
+    return {
+      type: state.status === "failed" ? "error" : "warning",
+      title: state.status === "failed" ? `${name} update failed` : `${name} still needs an update`,
+      description: state.message ?? "The update did not finish.",
+      timeout: 0,
+      action: canRunHere ? retry : manual,
+      command: canRunHere ? null : command,
+    };
+  }
+  if (requestFailure !== null) {
+    return {
+      type: "error",
+      title: `Could not update ${name}`,
+      description: requestFailure,
+      timeout: 0,
+      action: canRunHere ? retry : manual,
+      command: canRunHere ? null : command,
+    };
+  }
+  if (!isProviderUpdateCandidate(provider)) return null;
+  const latest = provider.versionAdvisory.latestVersion;
+  const current = advisory?.currentVersion ?? provider.version;
+  return {
+    type: "info",
+    title: `${name} ${latest} is available`,
+    description:
+      manualReason ??
+      (current
+        ? `You're on ${current}. New sessions will use the updated provider.`
+        : "New sessions will use the updated provider."),
+    timeout: 0,
+    action: canRunHere ? { kind: "update", label: "Update", disabled: false } : manual,
+    command: canRunHere ? null : command,
+  };
+}
+
+/** Why this client cannot run the provider's update, or null when it can. */
+export function getProviderUpdateManualReason(input: {
+  readonly provider: ServerProvider;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly canManageProviders: boolean;
+}): string | null {
+  const { provider, providers, canManageProviders } = input;
+  const advisory = provider.versionAdvisory;
+  if (advisory?.canUpdate !== true || advisory.updateCommand === null) {
+    return (
+      advisory?.message ??
+      "T3 Code can't update this install. Update it with the tool that installed it."
+    );
+  }
+  if (!canManageProviders) return "You don't have permission to update providers here.";
+  if (
+    !isProviderUpdateCandidate(provider) ||
+    !hasOneClickUpdateProviderCandidate(provider, providers)
+  ) {
+    return "These instances are installed differently, so each needs its own update.";
+  }
+  return null;
+}
+
 export interface ProviderUpdateRun {
   readonly environmentId: EnvironmentId;
   readonly machineLabel: string;
