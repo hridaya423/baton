@@ -1,3 +1,4 @@
+import { useSyncLayout } from "@legendapp/list/react-native";
 import type { CaptainCrewDot } from "@t3tools/client-runtime/state/captainBoard";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useLayoutEffect, useRef } from "react";
@@ -76,6 +77,8 @@ export function CaptainCrewRail(props: {
   const crew = useCaptainCrew(props.environmentId, props.threadId);
   const openDetail = useOpenWorkspaceDetail();
   const reducedMotion = useReducedMotion();
+  // The crew arrives from the board stream, not the list's item data, so the list must be told to re-measure.
+  const syncLayout = useSyncLayout();
   const drawn = useSharedValue(1);
   const previousCount = useRef<number | null>(null);
 
@@ -83,10 +86,11 @@ export function CaptainCrewRail(props: {
   useLayoutEffect(() => {
     const before = previousCount.current;
     previousCount.current = crew.length;
+    if (before !== null && before !== crew.length) syncLayout();
     if (before !== 0 || crew.length === 0 || reducedMotion) return;
     drawn.set(0);
     drawn.set(withTiming(1, { duration: 360, easing: Easing.out(Easing.cubic) }));
-  }, [crew.length, drawn, reducedMotion]);
+  }, [crew.length, drawn, reducedMotion, syncLayout]);
 
   const lineStyle = useAnimatedStyle(() => ({
     transformOrigin: "top",
