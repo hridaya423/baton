@@ -4,7 +4,7 @@ A captain is a thread you talk to about a whole project: "juice up the README fo
 
 ## Start one
 
-Open the menu on a thread and choose **Make captain**. The crew board opens beside the chat. Threads that are subagents, crew or reviewers cannot become captains.
+Open the menu on a thread and choose **Make captain**. The crew board opens beside the chat. If the thread was already working, that turn stops and the captain plans the conversation's goal as orders, or asks you for the goal in one line. On a new thread, your first message is the goal. Threads that are subagents, crew or reviewers cannot become captains.
 
 ## The crew board
 

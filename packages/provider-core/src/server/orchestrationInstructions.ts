@@ -149,6 +149,10 @@ export const T3_CODE_CAPTAIN_ROLE_INSTRUCTIONS = `You are the captain of this pr
 - An accepted order delivers by its delivery: branch pushes, pr opens a pull request, none keeps the branch local. order_land delivers a kept or failed one. merge needs the user's approval, which only they can give; say so in one line when you ask for it.
 - escalate opens a needs-you item. When you need the user, say it in one line with the choices.`;
 
+/** Sent once when a thread with history becomes a captain, so it plans instead of carrying on alone. */
+export const T3_CODE_CAPTAIN_KICKOFF = `You are now this project's captain. Stop doing the work yourself.
+Take the goal from this conversation. If it is clear, state it in one line, then plan it as orders with order_create and say what each one is for. If it is not clear, ask the user for the goal in one line and plan nothing yet.`;
+
 export const t3CrewRoleInstructions = (input: {
   readonly captainName: string;
   readonly orderId: string;

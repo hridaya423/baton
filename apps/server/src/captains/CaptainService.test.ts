@@ -5,8 +5,10 @@ import {
   type CaptainOrder,
   type CaptainOrderId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -102,6 +104,43 @@ it.effect("makes a thread a captain: pinned, no auto-settle, told what it is on 
         (yield* captains.list({})).map((listed) => listed.id),
         [captain.id],
       );
+    }),
+  ),
+);
+
+it.effect("a thread made captain mid-turn stops working itself and starts planning orders", () =>
+  withHarness({}, (harness) =>
+    Effect.gen(function* () {
+      const idle = harness.shells.get(captainThreadId)!;
+      harness.shells.set(captainThreadId, {
+        ...idle,
+        activeRunId: RunId.make("run:speed"),
+        latestUserMessageAt: DateTime.makeUnsafe("2026-11-06T10:11:35.000Z"),
+      });
+      yield* makeCaptain;
+      assert.deepEqual(
+        harness.interrupts.map((input) => input.threadId),
+        [captainThreadId],
+      );
+      const kickoff = harness.commands.find((command) => command.type === "message.dispatch");
+      assert.isTrue(
+        kickoff?.type === "message.dispatch" &&
+          kickoff.threadId === captainThreadId &&
+          kickoff.dispatchMode?.type === "queue_after_active" &&
+          kickoff.text.includes("order_create"),
+      );
+    }),
+  ),
+);
+
+it.effect("an empty idle thread made captain waits for its goal without a turn", () =>
+  withHarness({}, (harness) =>
+    Effect.gen(function* () {
+      const idle = harness.shells.get(captainThreadId)!;
+      harness.shells.set(captainThreadId, { ...idle, latestUserMessageAt: null });
+      yield* makeCaptain;
+      assert.deepEqual(harness.interrupts, []);
+      assert.isFalse(harness.commands.some((command) => command.type === "message.dispatch"));
     }),
   ),
 );

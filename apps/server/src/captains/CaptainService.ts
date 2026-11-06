@@ -38,6 +38,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  T3_CODE_CAPTAIN_KICKOFF,
   T3_CODE_CAPTAIN_ROLE_INSTRUCTIONS,
   t3CrewRoleInstructions,
   t3RemoteCrewInstructions,
@@ -2058,6 +2059,31 @@ const make = Effect.gen(function* () {
           commandId: CommandId.make(`server:captain-auto-settle:${yield* newId}`),
           threadId: captain.threadId,
           enabled: false,
+        });
+      }
+      // A running turn started without the captain's tools, so it would keep working alone.
+      if (shell.activeRunId !== null) {
+        yield* threads
+          .interruptThread({
+            projectId: captain.projectId,
+            commandId: CommandId.make(`server:captain-takeover:${yield* newId}`),
+            threadId: captain.threadId,
+            reason: "The thread became a captain.",
+          })
+          .pipe(Effect.ignore);
+      }
+      if ((shell.latestUserMessageAt ?? null) !== null) {
+        const id = yield* newId;
+        yield* dispatch(captain.threadId, {
+          type: "message.dispatch",
+          commandId: CommandId.make(`server:captain-kickoff:${id}`),
+          threadId: captain.threadId,
+          messageId: MessageId.make(`message:captain-kickoff:${id}`),
+          text: T3_CODE_CAPTAIN_KICKOFF,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
         });
       }
       return captain;

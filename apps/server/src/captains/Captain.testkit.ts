@@ -166,7 +166,7 @@ const layerRealGit = GitVcsDriver.layer.pipe(
 /** In-memory stand-ins for the thread services, so tests read what the captain code asked of them. */
 export const makeHarness = (options: CaptainHarnessOptions = {}) => {
   const shells = new Map<ThreadId, OrchestrationV2ThreadShell>([
-    [captainThreadId, shell(captainThreadId, options.captainShell)],
+    [captainThreadId, { ...shell(captainThreadId, options.captainShell), activeRunId: null }],
   ]);
   const commands: Array<Command> = [];
   const launches: Array<LaunchInput> = [];

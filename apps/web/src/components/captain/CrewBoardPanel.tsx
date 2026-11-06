@@ -60,6 +60,10 @@ export function CrewBoardPanel(props: { threadRef: ScopedThreadRef }) {
   const escalationsByOrder = openEscalationsByOrder(board.escalations.values());
   const working = columns.running.length + columns.checking.length;
   const paused = captain.status === "paused";
+  const noOrders =
+    dropped.length === 0 &&
+    looseEscalations.length === 0 &&
+    CAPTAIN_BOARD_COLUMNS.every((column) => columns[column].length === 0);
 
   const toggleStatus = async () => {
     setError(null);
@@ -111,51 +115,63 @@ export function CrewBoardPanel(props: { threadRef: ScopedThreadRef }) {
           {error}
         </Text>
       )}
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto @5xl/board:grid @5xl/board:auto-cols-[minmax(15rem,1fr)] @5xl/board:grid-flow-col @5xl/board:gap-3 @5xl/board:overflow-x-auto @5xl/board:overflow-y-hidden">
-        {CAPTAIN_BOARD_COLUMNS.map((column) => {
-          const orders = columns[column];
-          const loose = column === "needs-you" ? looseEscalations : [];
-          return (
-            <section
-              key={column}
-              aria-label={BOARD_COLUMN_LABELS[column]}
-              data-testid={`crew-board-column-${column}`}
-              data-empty={orders.length + loose.length === 0}
-              className={cn(
-                "flex shrink-0 flex-col gap-2 data-[empty=true]:hidden @5xl/board:min-h-0 @5xl/board:shrink @5xl/board:data-[empty=true]:flex",
-                column === "needs-you" && "order-first @5xl/board:order-none",
-              )}
-            >
-              <div className="flex items-center gap-2 px-1">
-                <Text variant="meta" tone="muted" emphasis>
-                  {BOARD_COLUMN_LABELS[column]}
-                </Text>
-                <Text variant="meta" tone="dim" numeric>
-                  {orders.length + loose.length}
-                </Text>
-              </div>
-              <div className="flex flex-col gap-2 @5xl/board:min-h-0 @5xl/board:flex-1 @5xl/board:overflow-y-auto">
-                {loose.map((escalation) => (
-                  <EscalationCard
-                    key={escalation.id}
-                    environmentId={environmentId}
-                    escalation={escalation}
-                  />
-                ))}
-                {orders.map((order) => (
-                  <OrderCard
-                    key={order.id}
-                    environmentId={environmentId}
-                    captain={captain}
-                    order={order}
-                    escalations={escalationsByOrder.get(order.id) ?? []}
-                  />
-                ))}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+      {noOrders ? (
+        <Empty size="compact">
+          <EmptyHeader>
+            <EmptyTitle>No orders yet</EmptyTitle>
+            <EmptyDescription>
+              Tell the captain what you want done. It splits the goal into orders, and each order
+              runs in its own crew thread.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto @5xl/board:grid @5xl/board:auto-cols-[minmax(15rem,1fr)] @5xl/board:grid-flow-col @5xl/board:gap-3 @5xl/board:overflow-x-auto @5xl/board:overflow-y-hidden">
+          {CAPTAIN_BOARD_COLUMNS.map((column) => {
+            const orders = columns[column];
+            const loose = column === "needs-you" ? looseEscalations : [];
+            return (
+              <section
+                key={column}
+                aria-label={BOARD_COLUMN_LABELS[column]}
+                data-testid={`crew-board-column-${column}`}
+                data-empty={orders.length + loose.length === 0}
+                className={cn(
+                  "flex shrink-0 flex-col gap-2 data-[empty=true]:hidden @5xl/board:min-h-0 @5xl/board:shrink @5xl/board:data-[empty=true]:flex",
+                  column === "needs-you" && "order-first @5xl/board:order-none",
+                )}
+              >
+                <div className="flex items-center gap-2 px-1">
+                  <Text variant="meta" tone="muted" emphasis>
+                    {BOARD_COLUMN_LABELS[column]}
+                  </Text>
+                  <Text variant="meta" tone="dim" numeric>
+                    {orders.length + loose.length}
+                  </Text>
+                </div>
+                <div className="flex flex-col gap-2 @5xl/board:min-h-0 @5xl/board:flex-1 @5xl/board:overflow-y-auto">
+                  {loose.map((escalation) => (
+                    <EscalationCard
+                      key={escalation.id}
+                      environmentId={environmentId}
+                      escalation={escalation}
+                    />
+                  ))}
+                  {orders.map((order) => (
+                    <OrderCard
+                      key={order.id}
+                      environmentId={environmentId}
+                      captain={captain}
+                      order={order}
+                      escalations={escalationsByOrder.get(order.id) ?? []}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
       {showDropped ? (
         <section aria-label="Dropped orders" className="flex max-h-[40%] flex-col gap-2">
           <Text variant="meta" tone="muted" emphasis>
