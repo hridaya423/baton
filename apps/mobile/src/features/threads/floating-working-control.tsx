@@ -22,6 +22,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { withUniwind } from "uniwind";
 
+import { BatonWorkingIndicator } from "../../components/baton/BatonWorkingIndicator";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -181,7 +182,9 @@ export function FloatingWorkingControl(props: {
         >
           <FloatingStatusLabel
             key={
-              props.status.kind === "working" || props.status.kind === "compacting"
+              props.status.kind === "working" ||
+              props.status.kind === "compacting" ||
+              props.status.kind === "syncing"
                 ? props.status.kind
                 : `${props.status.kind}:${props.status.label}`
             }
@@ -585,7 +588,8 @@ function WorkingDuration(props: {
   readonly onLayout: (event: LayoutChangeEvent) => void;
 }) {
   return (
-    <StatusLabelRow onLayout={props.onLayout}>
+    <StatusLabelRow className="gap-1.5" onLayout={props.onLayout}>
+      <BatonWorkingIndicator size={14} blockClassName="bg-foreground" />
       <WorkingTimer startedAt={props.startedAt} />
     </StatusLabelRow>
   );
