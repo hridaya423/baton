@@ -74,6 +74,7 @@ const MATERIAL_FRAME: Record<OrderMaterial, string> = {
   checking: "border border-border",
   built: "border border-border",
   landed: "border border-border",
+  failed: "border border-danger-border",
   scrapped: "border border-dashed border-foreground-tertiary opacity-40",
 };
 
