@@ -67,6 +67,7 @@ import {
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
+  PlusIcon,
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
@@ -254,10 +255,8 @@ import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/set
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
-import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { suggestAppAccessForRemote } from "./sourceControlAppAccessToast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import { returnKeyboardToFocusedPane } from "../layout/layoutPaneContext";
 import { useOpenLayoutPage } from "../layout/pageNavigation";
@@ -1091,68 +1090,40 @@ function OpenCommandPaletteDialog(props: {
       ...sortAddProjectProviderSources(readinessBySource),
     ];
 
+    const hiddenLabels: string[] = [];
     for (const source of orderedSources) {
       const label = addProjectRemoteSourceLabel(source);
-      const title = source === "url" ? "Git URL" : `${label} repository`;
-      const description =
-        source === "url"
-          ? "Clone from a remote URL"
-          : `Clone ${label} ${addProjectRemoteSourcePathHint(source)}`;
-      const readiness = readinessBySource(source);
-      const disabledHint = readiness.hint;
-
-      const titleTrailingContent = readiness.ready ? undefined : (
-        <span className="ml-auto">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="warning-outline"
-                  size="micro"
-                  onClick={() => {
-                    openSourceControlSettings();
-                  }}
-                >
-                  Setup Required
-                </Button>
-              }
-            />
-            <TooltipPopup align="end" side="left">
-              {disabledHint ?? "Open Settings -> Source control to configure this provider."}
-            </TooltipPopup>
-          </Tooltip>
-        </span>
-      );
-
-      if (!readiness.ready) {
-        sourceItems.push({
-          kind: "action",
-          value: `action:add-project:${environmentId}:${source}:not-ready`,
-          searchTerms: ["clone", "remote", "repository", "repo", "git", label, "setup required"],
-          title,
-          description,
-          disabled: true,
-          icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
-          ...(titleTrailingContent ? { titleTrailingContent } : {}),
-          run: async () => {},
-        });
+      if (!readinessBySource(source).ready) {
+        hiddenLabels.push(label);
         continue;
       }
-
       sourceItems.push({
         kind: "action",
         value: `action:add-project:${environmentId}:${source}`,
         searchTerms: ["clone", "remote", "repository", "repo", "git", label],
-        title,
-        description,
+        title: source === "url" ? "Git URL" : `${label} repository`,
+        description:
+          source === "url"
+            ? "Clone from a remote URL"
+            : `Clone ${label} ${addProjectRemoteSourcePathHint(source)}`,
         icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
-        ...(titleTrailingContent ? { titleTrailingContent } : {}),
         keepOpen: true,
         run: async () => {
           startAddProjectClone(environmentId, source);
         },
       });
     }
+
+    sourceItems.push({
+      kind: "action",
+      value: `action:add-project:${environmentId}:connect-source`,
+      searchTerms: ["connect", "source", "setup", "sign in", "clone", ...hiddenLabels],
+      title: "Connect another source…",
+      icon: <PlusIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openSourceControlSettings();
+      },
+    });
 
     return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
   };
