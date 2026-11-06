@@ -12,6 +12,7 @@ import {
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { playHaptic } from "../../lib/haptics";
 import { captainEnvironment, useCaptainSidebarIndexes } from "../../state/captains";
 import { buildCaptainMenuActions } from "./captain-menu";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -43,8 +44,10 @@ export function useCaptainThreadActions() {
     switch (action) {
       case "make-captain": {
         const result = await makeCaptain({ environmentId, input: { threadId: thread.id } });
-        if (result._tag === "Success") openBoard();
-        else fail("Could not make captain", result);
+        if (result._tag === "Success") {
+          playHaptic("makeCaptain");
+          openBoard();
+        } else fail("Could not make captain", result);
         return;
       }
       case "release-captain": {

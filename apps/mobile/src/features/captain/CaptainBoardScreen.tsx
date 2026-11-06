@@ -15,6 +15,7 @@ import { useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { BatonWireframe } from "../../components/baton/BatonWireframe";
 import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -23,6 +24,7 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { captainEnvironment, useCaptainBoard } from "../../state/captains";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { CrewStack } from "./CrewStack";
 import { EscalationCard } from "./EscalationCard";
 import { OrderRow } from "./OrderRow";
 
@@ -95,11 +97,13 @@ export function CaptainBoardScreen({ route }: StaticScreenProps<CaptainBoardPara
             contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
           >
             <View className="gap-3">
-              <View className="flex-row items-center gap-3">
-                <Text textRole="footnote" className="min-w-0 flex-1 text-foreground-muted">
-                  {working} of {captain.charter.crewCap} crew working
-                  {paused ? " · Paused" : ""}
-                </Text>
+              <View className="flex-row items-end gap-3">
+                <CrewStack
+                  columns={columns.columns}
+                  working={working}
+                  crewCap={captain.charter.crewCap}
+                  paused={paused}
+                />
                 <Button
                   label={paused ? "Resume" : "Pause"}
                   tone="secondary"
@@ -121,6 +125,7 @@ export function CaptainBoardScreen({ route }: StaticScreenProps<CaptainBoardPara
             {sections.length === 0 && columns.dropped.length === 0 ? (
               <EmptyState
                 variant="plain"
+                glyph={<BatonWireframe width={120} />}
                 title="No orders yet"
                 detail="Ask the captain for work and its crew appears here."
               />
