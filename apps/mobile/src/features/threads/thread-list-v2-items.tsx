@@ -8,6 +8,7 @@ import {
   getThreadListV2NewBranchMenuTitle,
   getThreadListV2RowAppearance,
 } from "./thread-list-v2-row-appearance";
+import { BatonWorkingIndicator } from "../../components/baton/BatonWorkingIndicator";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -15,6 +16,8 @@ import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { claimFirstLoadRevealDelay } from "./firstLoadReveal";
+import { launchRevealOffsetMs } from "../../components/baton/batonLaunchState";
 import type { ThreadMoveDestination } from "./threadOrder";
 import type {
   EnvironmentProject,
@@ -30,6 +33,13 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import Animated, {
+  FadeInDown,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -113,6 +123,33 @@ const STATUS_PILL_BY_KIND: Record<
 };
 
 /** Same format as the web sidebar timer: 42s, 1m 34s, 2h 5m. */
+const ROW_PRESS_SPRING = {
+  damping: 18,
+  stiffness: 420,
+  reduceMotion: ReduceMotion.System,
+} as const;
+
+/** Rows scale down a touch while pressed, and rise in once on the session's first list load. */
+function useRowPhysics() {
+  const [enter] = useState(() => {
+    const delay = claimFirstLoadRevealDelay(Date.now());
+    return delay === null
+      ? undefined
+      : FadeInDown.delay(launchRevealOffsetMs() + delay)
+          .duration(260)
+          .withInitialValues({ transform: [{ translateY: 10 }] })
+          .reduceMotion(ReduceMotion.System);
+  });
+  const pressed = useSharedValue(1);
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: pressed.value }] }));
+  return {
+    enter,
+    style,
+    onPressIn: () => pressed.set(withSpring(0.98, ROW_PRESS_SPRING)),
+    onPressOut: () => pressed.set(withSpring(1, ROW_PRESS_SPRING)),
+  };
+}
+
 function formatWorkingPillDuration(elapsedMs: number): string {
   const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
   if (seconds < 60) return `${seconds}s`;
@@ -147,6 +184,11 @@ function ThreadListV2StatusPill(props: {
     <StatusBadge
       label={props.label ?? pill.label}
       icon={pill.symbol}
+      leading={
+        props.kind === "working" ? (
+          <BatonWorkingIndicator size={11} blockClassName="bg-adaptive-sky-600-400" />
+        ) : undefined
+      }
       tone={pill.tone}
       trailing={
         (props.kind === "working" || props.kind === "waiting") &&
@@ -830,6 +872,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
   // Cards in live sections can be lifted when any drop could apply to them.
+  const physics = useRowPhysics();
   const drag = useThreadListDragTarget({
     target: props.dragTarget,
     itemKey: threadListV2ThreadItemKey(thread),
@@ -1430,6 +1473,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           close();
           selectThread();
         }}
+        onPressIn={physics.onPressIn}
+        onPressOut={physics.onPressOut}
         style={rowAppearance.cardStyle}
       >
         {sidebarPane ? (
@@ -1457,6 +1502,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           close();
           selectThread();
         }}
+        onPressIn={physics.onPressIn}
+        onPressOut={physics.onPressOut}
         style={rowAppearance.style}
       >
         <View
@@ -1533,42 +1580,48 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     );
 
   if (!canOperateThread)
-    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+    return (
+      <Animated.View entering={physics.enter} style={physics.style}>
+        <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>
+      </Animated.View>
+    );
 
   return (
-    <ThreadListDragRow drag={drag}>
-      {customSnoozeOpen && (
-        <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
-      )}
-      <ThreadSwipeable
-        dormant={dormant}
-        threadKey={`${thread.environmentId}:${thread.id}`}
-        backgroundColor={rowAppearance.swipeBackgroundColor}
-        compactActions={variant === "slim"}
-        containerStyle={rowAppearance.swipeContainerStyle}
-        enableTrackpadSwipe
-        fullSwipeAction="primary"
-        fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
-        onDelete={handleDelete}
-        onSwipeableClose={props.onSwipeableClose}
-        onSwipeableWillOpen={props.onSwipeableWillOpen}
-        primaryAction={primaryAction}
-        secondaryAction={secondaryAction}
-        resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}:${thread.pinnedAt}`}
-        simultaneousWith={props.simultaneousSwipeGesture}
-        threadTitle={thread.title}
-      >
-        {(close) => (
-          <Menu
-            actions={menuActions}
-            onPressAction={handleMenuAction}
-            onOpenMenu={drag.onMenuOpen}
-            shouldOpenOnLongPress
-          >
-            {rowContent(close)}
-          </Menu>
+    <Animated.View entering={physics.enter} style={physics.style}>
+      <ThreadListDragRow drag={drag}>
+        {customSnoozeOpen && (
+          <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
         )}
-      </ThreadSwipeable>
-    </ThreadListDragRow>
+        <ThreadSwipeable
+          dormant={dormant}
+          threadKey={`${thread.environmentId}:${thread.id}`}
+          backgroundColor={rowAppearance.swipeBackgroundColor}
+          compactActions={variant === "slim"}
+          containerStyle={rowAppearance.swipeContainerStyle}
+          enableTrackpadSwipe
+          fullSwipeAction="primary"
+          fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
+          onDelete={handleDelete}
+          onSwipeableClose={props.onSwipeableClose}
+          onSwipeableWillOpen={props.onSwipeableWillOpen}
+          primaryAction={primaryAction}
+          secondaryAction={secondaryAction}
+          resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}:${thread.pinnedAt}`}
+          simultaneousWith={props.simultaneousSwipeGesture}
+          threadTitle={thread.title}
+        >
+          {(close) => (
+            <Menu
+              actions={menuActions}
+              onPressAction={handleMenuAction}
+              onOpenMenu={drag.onMenuOpen}
+              shouldOpenOnLongPress
+            >
+              {rowContent(close)}
+            </Menu>
+          )}
+        </ThreadSwipeable>
+      </ThreadListDragRow>
+    </Animated.View>
   );
 });

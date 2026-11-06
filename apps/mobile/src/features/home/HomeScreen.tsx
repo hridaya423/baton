@@ -36,7 +36,7 @@ import {
   ANDROID_READING_MAX_WIDTH,
   deriveCenteredContentHorizontalPadding,
 } from "../../lib/layout";
-import { BatonMark } from "../../components/BatonMark";
+import { BatonWireframe } from "../../components/baton/BatonWireframe";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
@@ -717,11 +717,7 @@ export function HomeScreen(props: HomeScreenProps) {
           >
             <View className="w-full max-w-[430px]">
               <EmptyState
-                glyph={
-                  emptyState.loading ? undefined : (
-                    <BatonMark size={32} colorClassName="accent-icon-muted" />
-                  )
-                }
+                glyph={emptyState.loading ? undefined : <BatonWireframe width={120} />}
                 title={emptyState.title}
                 detail={emptyState.detail}
                 actionLabel={

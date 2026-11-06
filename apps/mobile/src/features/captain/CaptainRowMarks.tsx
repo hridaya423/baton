@@ -1,6 +1,14 @@
 import type { CaptainCrewDot } from "@t3tools/client-runtime/state/captainBoard";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useLayoutEffect, useRef } from "react";
 import { Pressable, View } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -67,10 +75,28 @@ export function CaptainCrewRail(props: {
 }) {
   const crew = useCaptainCrew(props.environmentId, props.threadId);
   const openDetail = useOpenWorkspaceDetail();
+  const reducedMotion = useReducedMotion();
+  const drawn = useSharedValue(1);
+  const previousCount = useRef<number | null>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- draws the connector once when a crew first appears, not when a recycled row mounts
+  useLayoutEffect(() => {
+    const before = previousCount.current;
+    previousCount.current = crew.length;
+    if (before !== 0 || crew.length === 0 || reducedMotion) return;
+    drawn.set(0);
+    drawn.set(withTiming(1, { duration: 360, easing: Easing.out(Easing.cubic) }));
+  }, [crew.length, drawn, reducedMotion]);
+
+  const lineStyle = useAnimatedStyle(() => ({
+    transformOrigin: "top",
+    transform: [{ scaleY: drawn.value }],
+  }));
+
   if (crew.length === 0) return null;
   return (
     <View className="mt-1 flex-row" style={{ paddingLeft: props.leftInset }}>
-      <View className="mr-1 w-px self-stretch rounded-full bg-border" />
+      <Animated.View className="mr-1 w-px self-stretch rounded-full bg-border" style={lineStyle} />
       <View className="min-w-0 flex-1 gap-0.5">
         {crew.map((entry) => (
           <Pressable
