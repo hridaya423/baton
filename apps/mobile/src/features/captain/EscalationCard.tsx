@@ -11,6 +11,7 @@ import { View } from "react-native";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { StatusBadge } from "../../components/ui/StatusBadge";
+import { playHaptic } from "../../lib/haptics";
 import { captainEnvironment } from "../../state/captains";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -43,7 +44,11 @@ export function EscalationCard(props: {
       input: { escalationId: escalation.id, resolution: trimmed },
     });
     setPending(false);
-    if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+    if (result._tag === "Success") {
+      playHaptic("decide");
+      return;
+    }
+    if (isAtomCommandInterrupted(result)) return;
     const failure = squashAtomCommandFailure(result);
     setError(failure instanceof Error ? failure.message : "Could not send the answer.");
   };
