@@ -48,6 +48,8 @@ export function StatusBadge(props: {
   readonly label: string;
   readonly tone?: StatusBadgeTone;
   readonly icon?: AppSymbolName;
+  /** Drawn in place of `icon`, such as the working indicator. */
+  readonly leading?: ReactNode;
   readonly trailing?: ReactNode;
 }) {
   const tone = TONES[props.tone ?? "neutral"];
@@ -56,9 +58,15 @@ export function StatusBadge(props: {
       className={cn("h-[18px] flex-row items-center gap-1 rounded-md px-1.5", tone.fill)}
       style={{ borderCurve: "continuous" }}
     >
-      {props.icon ? (
-        <SymbolView name={props.icon} size={10} tintColorClassName={tone.tint} type="monochrome" />
-      ) : null}
+      {props.leading ??
+        (props.icon ? (
+          <SymbolView
+            name={props.icon}
+            size={10}
+            tintColorClassName={tone.tint}
+            type="monochrome"
+          />
+        ) : null)}
       <Text className={cn("text-xs font-t3-medium tabular-nums", tone.text)}>{props.label}</Text>
       {props.trailing}
     </View>
