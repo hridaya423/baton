@@ -78,21 +78,20 @@ export function captainBoardColumn(
   needsYou: boolean,
 ): CaptainBoardColumn | null {
   if (state === "dropped") return null;
-  if (needsYou) return "needs-you";
+  // A failed check or landing stops until someone retries or drops it, so it waits on the user.
+  if (needsYou || state === "verify_failed" || state === "land_failed") return "needs-you";
   switch (state) {
     case "queued":
       return "queued";
     case "running":
       return "running";
     case "verifying":
-    case "verify_failed":
     case "reviewing":
       return "checking";
     case "accepted":
     case "landing":
     case "landed":
     case "done":
-    case "land_failed":
       return "done";
   }
 }
