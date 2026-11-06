@@ -20,7 +20,7 @@ export function NewThreadButton(props: {
         "items-center justify-center bg-primary shadow-lg active:opacity-70",
         props.extended
           ? "h-[56px] flex-row gap-[8px] rounded-[16px] px-[16px]"
-          : "size-[80px] rounded-[20px]",
+          : "size-[80px] rounded-2xl",
         props.className,
       )}
       style={props.style}

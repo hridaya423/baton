@@ -296,6 +296,44 @@ export function ComposerActionButton(props: {
   );
 }
 
+/** Shown only while Design mode is on, so the composer says what the next turn will do. */
+export function ComposerDesignChip(props: {
+  readonly iconOnly: boolean;
+  readonly size?: "regular" | "large";
+  readonly onPress: () => void;
+}) {
+  const { scale, smallIconSize } = useAndroidControlSizing();
+  const height = Math.round((props.size === "large" ? 44 : 30) * scale);
+  return (
+    <Pressable
+      accessibilityLabel="Design mode is on"
+      accessibilityHint="Opens thread settings to turn it off"
+      accessibilityRole="button"
+      className="h-[44px] shrink-0 items-center justify-center px-0.5 active:opacity-70"
+      onPress={props.onPress}
+    >
+      <View
+        className="flex-row items-center justify-center gap-1.5 rounded-full border border-border border-continuous bg-subtle-strong"
+        style={{
+          height,
+          paddingHorizontal: props.iconOnly ? 0 : 10,
+          width: props.iconOnly ? height : undefined,
+        }}
+      >
+        <SymbolView
+          name="paintbrush"
+          size={smallIconSize}
+          tintColorClassName="accent-icon"
+          type="monochrome"
+        />
+        {props.iconOnly ? null : (
+          <Text className="text-xs font-t3-medium text-foreground">Design</Text>
+        )}
+      </View>
+    </Pressable>
+  );
+}
+
 export function ComposerToolbarButton(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
   readonly iconNode?: ReactNode;

@@ -20,11 +20,9 @@ export function GuestMessageName(props: { readonly name: string }) {
  * which every theme gets without a per-theme token.
  */
 export function GuestBubbleTint() {
-  return (
-    <View pointerEvents="none" className="absolute inset-0 rounded-[20px] bg-fuchsia-500/14" />
-  );
+  return <View pointerEvents="none" className="absolute inset-0 rounded-2xl bg-fuchsia-500/14" />;
 }
 
 /** A pending guest bubble has a dashed edge and no fill. */
 export const GUEST_PENDING_BUBBLE_CLASS_NAME =
-  "min-w-0 rounded-[20px] border border-dashed border-adaptive-fuchsia-500-a50-300-a40 bg-transparent px-3.5 py-2.5";
+  "min-w-0 rounded-2xl border border-dashed border-adaptive-fuchsia-500-a50-300-a40 bg-transparent px-3.5 py-2.5";

@@ -36,8 +36,8 @@ export function CaptainThreadBanner(props: {
         accessibilityLabel={label}
         className={
           needsYou === 0
-            ? "rounded-2xl border-continuous bg-grouped-card"
-            : "rounded-2xl border-continuous bg-adaptive-amber-500-a12-a16"
+            ? "rounded-2xl border border-border border-continuous bg-grouped-card"
+            : "rounded-2xl border border-warning-border border-continuous bg-warning"
         }
         onPress={open}
       >

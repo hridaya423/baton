@@ -37,12 +37,12 @@ type TerminalPalette = readonly [
 ];
 
 const PIERRE_LIGHT_THEME: TerminalTheme = {
-  background: "#fcfcfc",
+  background: "#f5f5f5",
   foreground: "#6C6C71",
   mutedForeground: "#8E8E95",
   border: "#eeeeef",
   cursorForeground: "#009fff",
-  cursorBackground: "#fcfcfc",
+  cursorBackground: "#f5f5f5",
   palette: [
     "#1F1F21",
     "#ff2e3f",
@@ -64,12 +64,12 @@ const PIERRE_LIGHT_THEME: TerminalTheme = {
 };
 
 const PIERRE_DARK_THEME: TerminalTheme = {
-  background: "#0a0a0a",
+  background: "#151515",
   foreground: "#adadb1",
   mutedForeground: "#8E8E95",
   border: "#2e2e30",
   cursorForeground: "#009fff",
-  cursorBackground: "#0a0a0a",
+  cursorBackground: "#151515",
   palette: [
     "#141415",
     "#ff2e3f",

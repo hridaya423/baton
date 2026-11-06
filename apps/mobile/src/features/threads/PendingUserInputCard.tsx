@@ -18,6 +18,7 @@ import Animated, {
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { StatusBadge } from "../../components/ui/StatusBadge";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -185,7 +186,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       pointerEvents={props.collapsed ? "none" : "auto"}
       accessibilityElementsHidden={props.collapsed}
       importantForAccessibility={props.collapsed ? "no-hide-descendants" : "auto"}
-      className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
+      className="overflow-hidden gap-2.5 rounded-2xl border border-warning-border border-continuous bg-card-alt p-4"
       style={cardAnimatedStyle}
     >
       <Pressable
@@ -195,8 +196,12 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         className="flex-row items-start gap-2"
       >
         <View className="flex-1 gap-2.5">
-          <Text className="font-t3-bold text-2xs text-foreground-secondary">User input needed</Text>
-          <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
+          <View className="flex-row">
+            <StatusBadge label="User input needed" tone="attention" icon="questionmark.bubble" />
+          </View>
+          <Text className="font-t3-bold text-base text-foreground">
+            Fill in the pending answers
+          </Text>
         </View>
         <View className="h-8 w-8 items-center justify-center rounded-full bg-subtle-strong">
           <SymbolView

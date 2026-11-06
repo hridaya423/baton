@@ -1,8 +1,6 @@
 import {
   BUILT_IN_THEMES,
   T3_CHAT_THEME,
-  T3_CODE_LIGHT_THEME_COLORS,
-  T3_CODE_DARK_THEME_COLORS,
   getThemeColorsForAppearance,
   MOBILE_DEFAULT_THEME_ID,
   MOBILE_THEME_IDS as SHARED_MOBILE_THEME_IDS,
@@ -10,6 +8,7 @@ import {
   type ThemeAppearance,
   type ThemeColors,
 } from "@t3tools/shared/themePalettes";
+import { BATON_DARK_THEME_COLORS, BATON_LIGHT_THEME_COLORS } from "./batonTheme.ts";
 import {
   STANDARD_THEME_PREVIEW_COLORS,
   type ThemePreviewColors,
@@ -453,7 +452,7 @@ export function getMobileThemeColors(
   appearance: MobileThemeAppearance,
 ): ThemeColors {
   if (themeId === DEFAULT_MOBILE_THEME_ID) {
-    return appearance === "dark" ? T3_CODE_DARK_THEME_COLORS : T3_CODE_LIGHT_THEME_COLORS;
+    return appearance === "dark" ? BATON_DARK_THEME_COLORS : BATON_LIGHT_THEME_COLORS;
   }
   const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
   return getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
@@ -467,29 +466,14 @@ export function getMobileThemeVariables(
   const colors = getMobileThemeColors(themeId, appearance);
   const groupedCard =
     themeId === DEFAULT_MOBILE_THEME_ID
-      ? appearance === "light"
-        ? colors.toolbarControlHover
-        : colors.sidebarRowActive
+      ? colors.surface
       : themeId === "t3-chat"
         ? appearance === "light"
           ? colors.toolbarControl
           : colors.surface
         : colors.muted;
-  const mobileColors =
-    themeId === DEFAULT_MOBILE_THEME_ID
-      ? {
-          ...colors,
-          messageSurface: flattenThemeColor(
-            themeColorWithAlpha(
-              appearance === "dark" ? colors.sidebarRowActive : colors.border,
-              0.3,
-            ),
-            colors.messageSurface,
-          ),
-        }
-      : colors;
   const baseVariables = createMobileThemeVariables(
-    mobileColors,
+    colors,
     appearance,
     groupedCard,
     themeId === "t3-chat" && appearance === "dark"
@@ -498,16 +482,34 @@ export function getMobileThemeVariables(
         ? [colors.messageAction, colors.messageActionForeground]
         : undefined,
   );
+  // Baton's primary is near-black, so links take the one blue.
+  const batonVariables =
+    themeId === DEFAULT_MOBILE_THEME_ID
+      ? {
+          "--color-md-link": themeColorWithContrast(
+            themeColorToNativeColor(colors.accent),
+            themeColorToNativeColor(colors.canvas),
+          ),
+        }
+      : null;
 
-  return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;
+  const variables = batonVariables ? { ...baseVariables, ...batonVariables } : baseVariables;
+  return overrides ? ({ ...variables, ...overrides } as MobileThemeVariables) : variables;
 }
 
 export function getMobileThemePreviewColors(
   themeId: MobileThemeId,
   appearance: MobileThemeAppearance,
 ): ThemePreviewColors {
-  if (themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you")
-    return STANDARD_THEME_PREVIEW_COLORS[appearance];
+  if (themeId === "material-you") return STANDARD_THEME_PREVIEW_COLORS[appearance];
+  if (themeId === DEFAULT_MOBILE_THEME_ID) {
+    const colors = getMobileThemeColors(themeId, appearance);
+    return {
+      canvas: colors.canvas,
+      accent: colors.messageAction,
+      messageAction: colors.messageAction,
+    };
+  }
   const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
   const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
   return {

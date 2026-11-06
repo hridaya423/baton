@@ -29,7 +29,7 @@ export function ProviderSubagentBar(props: {
     props.effortLabel === null ? props.modelLabel : `${props.modelLabel}, ${props.effortLabel}`;
 
   return (
-    <View className="flex-row items-center gap-3 rounded-[20px] border border-border-subtle bg-card-alt py-2 pe-2 ps-4">
+    <View className="flex-row items-center gap-3 rounded-2xl border-continuous border border-border-subtle bg-card-alt py-2 pe-2 ps-4">
       {}
       <View
         accessible

@@ -10,6 +10,7 @@ import { View } from "react-native";
 
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import { StatusBadge } from "../../components/ui/StatusBadge";
 import { captainEnvironment } from "../../state/captains";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -50,15 +51,11 @@ export function EscalationCard(props: {
   return (
     <View
       accessible={false}
-      className="gap-3 rounded-2xl border-continuous bg-grouped-card p-4"
+      className="gap-3 rounded-2xl border border-border border-continuous bg-grouped-card p-4"
       testID="captain-escalation-card"
     >
       <View className="flex-row items-center gap-2">
-        <View className="rounded-[5px] bg-adaptive-amber-500-a12-a16 px-[5px] py-px">
-          <Text textRole="label" className="font-t3-medium text-warning-foreground">
-            {ESCALATION_KIND_LABELS[escalation.kind]}
-          </Text>
-        </View>
+        <StatusBadge label={ESCALATION_KIND_LABELS[escalation.kind]} tone="attention" />
         {props.captainName === undefined ? null : (
           <Text textRole="label" className="min-w-0 shrink text-foreground-muted" numberOfLines={1}>
             {props.captainName}

@@ -35,6 +35,11 @@ import type { ThreadListProvider } from "../../state/thread-list-environments";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
+import {
+  StatusBadge,
+  statusBadgeTextClassName,
+  type StatusBadgeTone,
+} from "../../components/ui/StatusBadge";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
@@ -89,83 +94,22 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 // long-press actions. State reads through tinted status pills and text
 type ThreadListV2PillKind = Exclude<ThreadListV2Status, "ready"> | "merged" | "done";
 
-// Status hues follow the system-wide convention set by the web sidebar and the
-// thread reads the same color everywhere it surfaces. Each pill is the hue on
-// a 12% (light) / 16% (dark) fill of the same hue, like the web sidebar pills.
+// Four hues carry status, as on StatusBadge: the user is needed, it failed, it is moving, it
+// finished. Merged is a finished thing, so it shares Done's hue and keeps its own glyph.
 const STATUS_PILL_BY_KIND: Record<
   ThreadListV2PillKind,
-  {
-    readonly label: string;
-    readonly symbol: AppSymbolName;
-    readonly textClassName: string;
-    readonly tintClassName: string;
-    readonly fillClassName: string;
-  }
+  { readonly label: string; readonly symbol: AppSymbolName; readonly tone: StatusBadgeTone }
 > = {
-  approval: {
-    label: "Approval",
-    symbol: "exclamationmark.shield",
-    textClassName: "text-warning-foreground",
-    tintClassName: "accent-warning-foreground",
-    fillClassName: "bg-adaptive-amber-500-a12-a16",
-  },
-  input: {
-    label: "Input",
-    symbol: "questionmark.bubble",
-    textClassName: "text-adaptive-indigo-600-300",
-    tintClassName: "accent-adaptive-indigo-600-300",
-    fillClassName: "bg-adaptive-indigo-500-a12-a16",
-  },
-  request: {
-    label: "Request",
-    symbol: "person.crop.circle",
-    textClassName: "text-adaptive-fuchsia-600-300",
-    tintClassName: "accent-adaptive-fuchsia-600-300",
-    fillClassName: "bg-adaptive-fuchsia-600-300/12",
-  },
-  working: {
-    label: "Working",
-    symbol: "circle.dashed",
-    textClassName: "text-adaptive-sky-600-400",
-    tintClassName: "accent-adaptive-sky-600-400",
-    fillClassName: "bg-adaptive-sky-500-a12-a16",
-  },
+  approval: { label: "Approval", symbol: "exclamationmark.shield", tone: "attention" },
+  input: { label: "Input", symbol: "questionmark.bubble", tone: "attention" },
+  request: { label: "Request", symbol: "person.crop.circle", tone: "attention" },
+  working: { label: "Working", symbol: "circle.dashed", tone: "progress" },
   // Runtime "idle": the agent stopped with background tasks still open.
-  waiting: {
-    label: "Monitoring",
-    symbol: "eye",
-    textClassName: "text-adaptive-blue-600-400",
-    tintClassName: "accent-adaptive-blue-600-400",
-    fillClassName: "bg-adaptive-blue-600-400/12",
-  },
-  failed: {
-    label: "Failed",
-    symbol: "exclamationmark.circle",
-    textClassName: "text-danger-foreground",
-    tintClassName: "accent-danger-foreground",
-    fillClassName: "bg-adaptive-rose-500-a12-a16",
-  },
-  limited: {
-    label: "Limited",
-    symbol: "exclamationmark.circle",
-    textClassName: "text-warning-foreground",
-    tintClassName: "accent-warning-foreground",
-    fillClassName: "bg-adaptive-amber-500-a12-a16",
-  },
-  merged: {
-    label: "Merged",
-    symbol: PullRequestGlyph.merged,
-    textClassName: "text-adaptive-violet-600-400",
-    tintClassName: "accent-adaptive-violet-600-400",
-    fillClassName: "bg-adaptive-violet-500-a12-a16",
-  },
-  done: {
-    label: "Done",
-    symbol: "checkmark.circle",
-    textClassName: "text-adaptive-emerald-700-300",
-    tintClassName: "accent-adaptive-emerald-700-300",
-    fillClassName: "bg-adaptive-emerald-500-a12-a16",
-  },
+  waiting: { label: "Monitoring", symbol: "eye", tone: "progress" },
+  failed: { label: "Failed", symbol: "exclamationmark.circle", tone: "danger" },
+  limited: { label: "Limited", symbol: "exclamationmark.circle", tone: "attention" },
+  merged: { label: "Merged", symbol: PullRequestGlyph.merged, tone: "success" },
+  done: { label: "Done", symbol: "checkmark.circle", tone: "success" },
 };
 
 /** Same format as the web sidebar timer: 42s, 1m 34s, 2h 5m. */
@@ -200,25 +144,20 @@ function ThreadListV2StatusPill(props: {
 }) {
   const pill = STATUS_PILL_BY_KIND[props.kind];
   return (
-    <View
-      className={cn(
-        "h-[18px] flex-row items-center gap-1 rounded-[5px] px-[5px]",
-        pill.fillClassName,
-      )}
-    >
-      <SymbolView
-        name={pill.symbol}
-        size={10}
-        tintColorClassName={pill.tintClassName}
-        type="monochrome"
-      />
-      <Text className={cn("text-xs font-t3-medium", pill.textClassName)}>
-        {props.label ?? pill.label}
-      </Text>
-      {(props.kind === "working" || props.kind === "waiting") && props.workingStartedAt !== null ? (
-        <WorkingPillTimer startedAt={props.workingStartedAt} className={pill.textClassName} />
-      ) : null}
-    </View>
+    <StatusBadge
+      label={props.label ?? pill.label}
+      icon={pill.symbol}
+      tone={pill.tone}
+      trailing={
+        (props.kind === "working" || props.kind === "waiting") &&
+        props.workingStartedAt !== null ? (
+          <WorkingPillTimer
+            startedAt={props.workingStartedAt}
+            className={statusBadgeTextClassName(pill.tone)}
+          />
+        ) : null
+      }
+    />
   );
 }
 
@@ -1228,6 +1167,33 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
+  const hasMetaLine =
+    ((status === "failed" || status === "limited") && Boolean(thread.runtime?.lastError)) ||
+    Boolean(props.environmentLabel) ||
+    Boolean(pr);
+  const providerIcons = providerInstance ? (
+    <View className="flex-row items-center">
+      {providerDrivers.slice(0, -1).map(
+        (driver, index) => (
+          /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
+            key={`${driver}:${index}`}
+            className="-mr-1 opacity-30"
+          >
+            <ProviderIcon provider={driver} size={12} />
+          </View>
+        ) /* oxlint-enable react/no-array-index-key */,
+      )}
+      <ProviderInstanceIcon
+        iconUrl={providerIconUrl}
+        provider={providerInstance.driverKind}
+        size={14}
+        displayName={providerInstance.displayName}
+        accentColor={providerInstance.accentColor}
+        showBadge={providerInstance.showBadge}
+        surfaceColor={rowAppearance.providerIconSurfaceColor}
+      />
+    </View>
+  ) : null;
   const cardContent = (
     <>
       <View className="flex-row items-start gap-2">
@@ -1336,6 +1302,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               {timeLabel}
             </Text>
           )}
+          {hasMetaLine ? null : providerIcons}
         </View>
       </View>
       {props.searchMatch ? (
@@ -1348,102 +1315,82 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           />
         </View>
       ) : null}
-      <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
-        {(status === "failed" || status === "limited") && thread.runtime?.lastError ? (
-          <Text
-            className={cn(
-              "flex-1 text-xs",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : status === "limited"
-                  ? "text-warning-foreground"
-                  : "text-danger-foreground",
-            )}
-            numberOfLines={1}
-          >
-            {thread.runtime.lastError}
-          </Text>
-        ) : props.environmentLabel ? (
-          <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            {props.environmentMachine ? (
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={machineIconSize}
-                tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.mutedIconTintClassName
-                    : rowAppearance.tertiaryIconTintClassName
-                }
-              />
-            ) : null}
+      {hasMetaLine ? (
+        <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
+          {(status === "failed" || status === "limited") && thread.runtime?.lastError ? (
             <Text
               className={cn(
-                "shrink text-xs",
+                "flex-1 text-xs",
                 selected
                   ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
+                  : status === "limited"
+                    ? "text-warning-foreground"
+                    : "text-danger-foreground",
               )}
               numberOfLines={1}
             >
-              {props.environmentLabel}
+              {thread.runtime.lastError}
             </Text>
-          </View>
-        ) : (
-          <View className="flex-1" />
-        )}
-        {pr ? (
-          // Match web: a state-colored PR number and dim count for folded links.
-          <Pressable
-            // Padding cancelled by negative margin grows the touch target into
-            // the row padding without moving the badge.
-            className="-m-2.5 flex-row items-center gap-0.5 p-2.5"
-            accessibilityRole="button"
-            accessibilityLabel={prBadgeLabel ?? undefined}
-            onPress={handleOpenPullRequests}
-            // Handle long-press so opening the iOS row menu cannot also open the PR on release.
-            onLongPress={() => undefined}
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-          >
-            <Text
-              className={cn("text-xs tabular-nums", pr.textClassName)}
-              style={{ fontFamily: MONO_FONT }}
-            >
-              #{pr.number}
-            </Text>
-            {threadPrMoreCount(pr) > 0 ? (
+          ) : props.environmentLabel ? (
+            <View className="min-w-0 flex-1 flex-row items-center gap-1">
+              {props.environmentMachine ? (
+                <EnvironmentMachineSymbol
+                  kind={props.environmentMachine}
+                  size={machineIconSize}
+                  tintColorClassName={
+                    selected
+                      ? selectedThreadRowColors.mutedIconTintClassName
+                      : rowAppearance.tertiaryIconTintClassName
+                  }
+                />
+              ) : null}
               <Text
-                className={cn("text-xs tabular-nums opacity-60", pr.textClassName)}
+                className={cn(
+                  "shrink text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+              >
+                {props.environmentLabel}
+              </Text>
+            </View>
+          ) : (
+            <View className="flex-1" />
+          )}
+          {pr ? (
+            // Match web: a state-colored PR number and dim count for folded links.
+            <Pressable
+              // Padding cancelled by negative margin grows the touch target into
+              // the row padding without moving the badge.
+              className="-m-2.5 flex-row items-center gap-0.5 p-2.5"
+              accessibilityRole="button"
+              accessibilityLabel={prBadgeLabel ?? undefined}
+              onPress={handleOpenPullRequests}
+              // Handle long-press so opening the iOS row menu cannot also open the PR on release.
+              onLongPress={() => undefined}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+            >
+              <Text
+                className={cn("text-xs tabular-nums", pr.textClassName)}
                 style={{ fontFamily: MONO_FONT }}
               >
-                +{threadPrMoreCount(pr)}
+                #{pr.number}
               </Text>
-            ) : null}
-          </Pressable>
-        ) : null}
-        {providerInstance ? (
-          <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map(
-              (driver, index) => (
-                /* oxlint-disable react/no-array-index-key -- Provider history can repeat a driver; these decorative icons have no local state. */ <View
-                  key={`${driver}:${index}`}
-                  className="-mr-1 opacity-30"
+              {threadPrMoreCount(pr) > 0 ? (
+                <Text
+                  className={cn("text-xs tabular-nums opacity-60", pr.textClassName)}
+                  style={{ fontFamily: MONO_FONT }}
                 >
-                  <ProviderIcon provider={driver} size={12} />
-                </View>
-              ) /* oxlint-enable react/no-array-index-key */,
-            )}
-            <ProviderInstanceIcon
-              iconUrl={providerIconUrl}
-              provider={providerInstance.driverKind}
-              size={14}
-              displayName={providerInstance.displayName}
-              accentColor={providerInstance.accentColor}
-              showBadge={providerInstance.showBadge}
-              surfaceColor={rowAppearance.providerIconSurfaceColor}
-            />
-          </View>
-        ) : null}
-      </View>
+                  +{threadPrMoreCount(pr)}
+                </Text>
+              ) : null}
+            </Pressable>
+          ) : null}
+          {providerIcons}
+        </View>
+      ) : null}
       <CaptainCrewRail
         environmentId={thread.environmentId}
         threadId={thread.id}

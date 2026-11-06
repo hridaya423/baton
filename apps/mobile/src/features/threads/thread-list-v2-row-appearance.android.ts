@@ -2,15 +2,15 @@ import type { ViewStyle } from "react-native";
 import type { MobileThemeVariables } from "../../lib/mobileTheme";
 
 export const THREAD_LIST_V2_MONO_FONT = "monospace";
-export const THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME = "px-3 py-2.5";
+export const THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME = "px-4 py-3";
 export const THREAD_LIST_V2_ROW_DIVIDERS = false;
 export const THREAD_LIST_V2_SIDEBAR_ROW_STYLE = {
-  borderRadius: 20,
+  borderRadius: 12,
   paddingHorizontal: 12,
   paddingVertical: 10,
 } satisfies ViewStyle;
 export const THREAD_LIST_V2_SIDEBAR_ROW_CONTAINER_STYLE = {
-  borderRadius: 20,
+  borderRadius: 12,
   overflow: "hidden",
   marginHorizontal: 8,
   marginVertical: 2,

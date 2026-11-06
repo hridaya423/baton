@@ -11,10 +11,13 @@ export function EmptyState(props: {
   readonly onAction?: () => void;
   readonly action?: ReactNode;
   readonly variant?: "card" | "plain";
+  /** A quiet glyph above a plain empty state, such as the brand mark on an empty list. */
+  readonly glyph?: ReactNode;
 }) {
   if (props.variant === "plain") {
     return (
       <View className="items-center px-8 py-8">
+        {props.glyph ? <View className="mb-4">{props.glyph}</View> : null}
         <Text textRole="title" className="text-center font-t3-bold text-foreground">
           {props.title}
         </Text>
@@ -36,7 +39,7 @@ export function EmptyState(props: {
   }
 
   return (
-    <View className="rounded-[22px] border border-border bg-card p-5">
+    <View className="rounded-2xl border border-border border-continuous bg-card p-5">
       <Text textRole="headline" className="font-t3-bold text-foreground">
         {props.title}
       </Text>

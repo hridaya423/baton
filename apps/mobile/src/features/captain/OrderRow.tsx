@@ -33,7 +33,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { Menu } from "../../components/ui/Menu";
-import { cn } from "../../lib/cn";
+import { StatusBadge, type StatusBadgeTone } from "../../components/ui/StatusBadge";
 import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
 import { captainEnvironment } from "../../state/captains";
 import { useThreadShell } from "../../state/entities";
@@ -42,23 +42,16 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { EscalationCard } from "./EscalationCard";
 
-const TONE_PILL: Record<CaptainTone | "neutral" | "warning", string> = {
-  success: "bg-adaptive-emerald-500-a12-a16 text-adaptive-emerald-700-300",
-  error: "bg-adaptive-rose-500-a12-a16 text-danger-foreground",
-  info: "bg-adaptive-sky-500-a12-a16 text-adaptive-sky-600-400",
-  warning: "bg-adaptive-amber-500-a12-a16 text-warning-foreground",
-  neutral: "bg-subtle-strong text-foreground-muted",
-};
+const BADGE_TONE = {
+  success: "success",
+  error: "danger",
+  info: "progress",
+  warning: "attention",
+  neutral: "neutral",
+} as const satisfies Record<CaptainTone | "neutral" | "warning", StatusBadgeTone>;
 
-function Pill(props: { readonly label: string; readonly tone: keyof typeof TONE_PILL }) {
-  const [fill, text] = TONE_PILL[props.tone].split(" ") as [string, string];
-  return (
-    <View className={cn("rounded-[5px] px-[5px] py-px", fill)}>
-      <Text textRole="label" className={cn("font-t3-medium", text)}>
-        {props.label}
-      </Text>
-    </View>
-  );
+function Pill(props: { readonly label: string; readonly tone: keyof typeof BADGE_TONE }) {
+  return <StatusBadge label={props.label} tone={BADGE_TONE[props.tone]} />;
 }
 
 const SEVERITY_TONE = { high: "error", medium: "warning", low: "neutral" } as const;
@@ -221,7 +214,7 @@ export function OrderRow(props: {
   return (
     <View
       accessible={false}
-      className="gap-2 rounded-2xl border-continuous bg-grouped-card p-4"
+      className="gap-2 rounded-2xl border border-border border-continuous bg-grouped-card p-4"
       testID="captain-order-row"
     >
       <View className="flex-row items-start gap-2">
@@ -230,29 +223,17 @@ export function OrderRow(props: {
         </Text>
         <Pill label={ORDER_STATE_LABELS[state]} tone={failed ? "error" : "neutral"} />
       </View>
-      <View className="flex-row flex-wrap items-center gap-x-2 gap-y-1">
-        <Pill label={ORDER_KIND_LABELS[order.kind]} tone="neutral" />
-        {model === null ? null : (
-          <Text textRole="label" className="text-foreground-muted">
-            {formatModelSlugName(model)}
-          </Text>
-        )}
-        {order.kind === "change" ? (
-          <Text textRole="label" className="text-foreground-muted">
-            {DELIVERY_LABELS[order.delivery]}
-          </Text>
-        ) : null}
-        {order.retries > 0 ? (
-          <Text textRole="label" className="text-foreground-muted">
-            {order.retries === 1 ? "1 retry" : `${order.retries} retries`}
-          </Text>
-        ) : null}
-      </View>
-      {machine === null ? null : (
-        <Text textRole="label" className="text-foreground-muted">
-          On {machine}
-        </Text>
-      )}
+      <Text textRole="label" className="text-foreground-muted">
+        {[
+          ORDER_KIND_LABELS[order.kind],
+          model === null ? null : formatModelSlugName(model),
+          order.kind === "change" ? DELIVERY_LABELS[order.delivery] : null,
+          order.retries > 0 ? (order.retries === 1 ? "1 retry" : `${order.retries} retries`) : null,
+          machine === null ? null : `On ${machine}`,
+        ]
+          .filter((part) => part !== null)
+          .join(" · ")}
+      </Text>
       {order.branch === null ? null : (
         <Text textRole="label" className="font-mono text-foreground-muted" numberOfLines={1}>
           {order.branch}
@@ -281,9 +262,11 @@ export function OrderRow(props: {
         </View>
       )}
       {state === "land_failed" ? (
-        <Text textRole="footnote" className="text-danger-foreground" accessibilityRole="alert">
-          {land?.error ?? "Landing failed."}
-        </Text>
+        <View className="rounded-xl border-continuous bg-danger px-3 py-2">
+          <Text textRole="footnote" className="text-danger-foreground" accessibilityRole="alert">
+            {land?.error ?? "Landing failed."}
+          </Text>
+        </View>
       ) : null}
       {land?.prUrl === undefined ? null : (
         <Pressable
@@ -316,19 +299,6 @@ export function OrderRow(props: {
         <EscalationCard key={escalation.id} environmentId={environmentId} escalation={escalation} />
       ))}
       <View className="flex-row flex-wrap items-center gap-2 pt-1">
-        {order.threadId === null ? null : (
-          <Button
-            label="Open thread"
-            tone="text"
-            size="compact"
-            onPress={() =>
-              openDetail({
-                name: "Thread",
-                params: { environmentId: crewEnvironmentId, threadId: order.threadId! },
-              })
-            }
-          />
-        )}
         {canLand(state, order.kind) ? (
           <Menu
             actions={LAND_ACTIONS(order.delivery)}
@@ -367,6 +337,21 @@ export function OrderRow(props: {
             onPress={onDrop}
           />
         ) : null}
+        {order.threadId === null ? null : (
+          <View className="ml-auto">
+            <Button
+              label="Open thread"
+              tone="text"
+              size="compact"
+              onPress={() =>
+                openDetail({
+                  name: "Thread",
+                  params: { environmentId: crewEnvironmentId, threadId: order.threadId! },
+                })
+              }
+            />
+          </View>
+        )}
       </View>
       {error === null ? null : (
         <Text textRole="footnote" className="text-danger-foreground" accessibilityRole="alert">

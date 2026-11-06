@@ -31,7 +31,7 @@ export function ComposerUsageLimits({
     </Pressable>
   );
   return (
-    <View className="overflow-hidden rounded-[20px] border-continuous bg-card">
+    <View className="overflow-hidden rounded-2xl border-continuous bg-card">
       <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ maxHeight }}>
         {report.accounts.map((account, index) => {
           const resetCreditInput =

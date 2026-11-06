@@ -52,11 +52,12 @@ Each adopted upstream PR lands as one commit titled `adopt #NNNNN: <title>` and 
 
 Baton renames only what a user sees. Package names, env vars (`T3CODE_*`), internal identifiers and the `t3code://` link scheme stay upstream's, so rebases stay clean.
 
-- **Name in the UI.** `scripts/lib/baton-brand.ts` rewrites "T3 Code" to "Baton" in web and desktop bundles at build time. Tests run against upstream text.
+- **Name in the UI.** `scripts/lib/baton-brand.ts` rewrites "T3 Code" to "Baton" in web and desktop bundles at build time, and a Babel plugin from the same file does it for mobile (`apps/mobile/babel.config.js`; clear Metro's cache after changing it). Tests run against upstream text.
 - **Identity.** Bundle id `dev.hridaya.baton`, product name "Baton", Electron profile `~/Library/Application Support/baton`, staged package name `baton`. The package name also names the macOS keychain item (`baton Safe Storage`), so Baton never reads T3 Code's key.
 - **Data and ports.** State lives in `~/.baton`; the desktop backend starts at port 3873 and the CLI default is 3873. Baton runs beside T3 Code. `packages/shared/src/defaultServerPort.ts` holds that port. The server, the desktop app and Tailscale discovery (the probe, the sign-in URL for a bare address) read it, so they find other Baton machines, not T3 Code ones. Docs under `docs/user` still show upstream's 3773.
 - **Peer links over the tailnet.** #26757 signs in clients by Tailscale identity. Baton also lets another environment link that way: `McpOAuth` takes a `tailnet` decision, `TailnetSignIn.authorizePeerLink` runs the same checks, and `PeerLinks.link` tries it first for a `*.ts.net` host, falling back to a pairing code. Those sessions last an hour and renew themselves.
-- **Icon.** The baton mark in `assets/{prod,dev}/app-icon.icon/Assets/text.svg`, also drawn by `apps/web/src/components/T3Wordmark.tsx`.
+- **Icon.** The baton mark in `assets/{prod,dev,nightly}/app-icon.icon/Assets/text.svg`, also drawn by `apps/web/src/components/T3Wordmark.tsx` and `apps/mobile/src/components/BatonMark.tsx`. Mobile app names are Baton, Baton Preview and Baton Dev; bundle ids and schemes stay upstream's. Nightly's desktop icons (`nightly-{macos,universal,windows,web-*}`) are still the T3 art.
+- **Mobile theme.** The default theme's palette is `apps/mobile/src/lib/batonTheme.ts`, the web redesign's tokens; shared palettes stay upstream's. Run `vp run generate` in `apps/mobile` after editing it.
 - **Telemetry** is off by default, since the default sink is upstream's. Set `T3CODE_TELEMETRY_ENABLED=true` to turn it on.
 - **Updates.** Local builds have no update feed, so the updater never replaces Baton with T3 Code.
 

@@ -945,7 +945,7 @@ function UserMessageMedia(props: {
   ];
   return collage ? (
     <View
-      className="overflow-hidden rounded-[20px] bg-border"
+      className="overflow-hidden rounded-2xl border-continuous bg-border"
       style={{ width: 320, maxWidth: "100%", alignSelf: "flex-end", gap: StyleSheet.hairlineWidth }}
     >
       {media.length === 3 ? (
@@ -970,20 +970,23 @@ function UserMessageMedia(props: {
             </View>
           ))
       )}
-      <View pointerEvents="none" className="absolute inset-0 rounded-[20px] border border-border" />
+      <View
+        pointerEvents="none"
+        className="absolute inset-0 rounded-2xl border-continuous border border-border"
+      />
     </View>
   ) : (
     <View className="items-end gap-2">
       {media.map((item) => (
         <View
           key={item.id}
-          className="overflow-hidden rounded-[20px]"
+          className="overflow-hidden rounded-2xl border-continuous"
           style={{ width: item.image ? undefined : 320, maxWidth: "100%" }}
         >
           {item.content}
           <View
             pointerEvents="none"
-            className="absolute inset-0 rounded-[20px] border border-border"
+            className="absolute inset-0 rounded-2xl border-continuous border border-border"
           />
         </View>
       ))}
@@ -1519,7 +1522,7 @@ function ThreadAutomationMessageRow(props: {
   return (
     <View className="mb-5 items-end">
       <View
-        className="min-w-0 rounded-[20px]"
+        className="min-w-0 rounded-2xl border-continuous"
         style={{
           backgroundColor: props.bubbleColor,
           maxWidth: props.bubbleMaxWidth,
@@ -2086,7 +2089,7 @@ function renderFeedEntry(
           ) : null}
           {hasBubble ? (
             <View
-              className="min-w-0 rounded-[20px]"
+              className="min-w-0 rounded-2xl border-continuous"
               style={{
                 backgroundColor: userBubbleColor,
                 maxWidth: props.duoColumns ? "85%" : props.userBubbleMaxWidth,
@@ -2125,7 +2128,7 @@ function renderFeedEntry(
                         attachmentId={attachment.uploadedAttachmentId}
                         name={attachment.name}
                         mimeType={attachment.mimeType}
-                        className="h-[140px] w-[180px] rounded-[14px]"
+                        className="h-[140px] w-[180px] rounded-xl"
                         onPressPreview={props.onPressPreview}
                       />
                     ) : attachment.type === "image" ? (
@@ -2169,8 +2172,8 @@ function renderFeedEntry(
                             mimeType={attachment.mimeType}
                             className={
                               inlineAttachmentIds.size
-                                ? "h-24 w-24 rounded-[14px] bg-user-bubble-foreground/15"
-                                : "aspect-[1.3] w-full rounded-[14px] bg-user-bubble-foreground/15"
+                                ? "h-24 w-24 rounded-xl bg-user-bubble-foreground/15"
+                                : "aspect-[1.3] w-full rounded-xl bg-user-bubble-foreground/15"
                             }
                             onPressPreview={props.onPressPreview}
                           />

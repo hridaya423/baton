@@ -19,7 +19,7 @@ export function NeedsYouEntry() {
         accessibilityRole="button"
         accessibilityLabel={label}
         accessibilityHint="Opens the decisions and approvals your captains are waiting on"
-        className="rounded-2xl border-continuous bg-adaptive-amber-500-a12-a16"
+        className="rounded-2xl border border-warning-border border-continuous bg-warning"
         onPress={() => navigation.navigate("NeedsYou")}
       >
         <View className="min-h-12 flex-row items-center gap-3 px-4 py-2.5">

@@ -12,6 +12,7 @@ import { useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { StatusBadge } from "../../components/ui/StatusBadge";
 import type { PendingApproval } from "../../lib/threadActivity";
 
 export interface PendingApprovalCardProps {
@@ -38,9 +39,11 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
   return (
-    <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
-      <Text className="font-t3-bold text-2xs text-foreground-secondary">Approval needed</Text>
-      <Text className="font-t3-bold text-lg text-foreground">
+    <View className="gap-2.5 rounded-2xl border border-warning-border border-continuous bg-card-alt p-4">
+      <View className="flex-row">
+        <StatusBadge label="Approval needed" tone="attention" icon="exclamationmark.shield" />
+      </View>
+      <Text className="font-t3-bold text-base text-foreground">
         {props.approval.appName ?? props.approval.requestKind}
       </Text>
       {props.approval.files && props.approval.files.length > 0 ? (
