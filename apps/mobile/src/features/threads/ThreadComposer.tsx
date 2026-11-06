@@ -33,7 +33,14 @@ import {
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
-import { I18nManager, Keyboard, Platform, View, type ViewStyle } from "react-native";
+import {
+  I18nManager,
+  Keyboard,
+  Platform,
+  View,
+  type ViewInstance,
+  type ViewStyle,
+} from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -56,6 +63,9 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { playHaptic } from "../../lib/haptics";
+import { PrismSweep } from "../../components/baton/Prism";
+import { recordBatonPass } from "./batonPass";
 import {
   getComposerDraftSnapshot,
   composerDraftsAtom,
@@ -355,6 +365,7 @@ function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly animateLayout?: boolean;
+  readonly streakKey?: number;
 }) {
   const colors = useUniwindTheme();
   const targetBorderRadius =
@@ -408,6 +419,13 @@ function ComposerSurface(props: {
       >
         {props.children}
       </Animated.View>
+      {props.streakKey === undefined ? null : (
+        <PrismSweep
+          playKey={props.streakKey}
+          height={1.5}
+          style={{ position: "absolute", top: 0, left: 0, right: 0 }}
+        />
+      )}
     </Animated.View>
   );
 }
@@ -676,6 +694,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onEditorFocusChange?.(false);
     setComposerEditing(false);
   };
+  const [streakKey, setStreakKey] = useState(0);
+  const composerColumnRef = useRef<ViewInstance>(null);
   const handleSend = async (followUp?: ActiveTurnComposerAction) => {
     if (
       isSubmissionLocked ||
@@ -691,6 +711,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
+    playHaptic("send");
+    setStreakKey((key) => key + 1);
+    composerColumnRef.current?.measureInWindow((_x, y) => recordBatonPass(y));
     const draftAtSend = getComposerDraftSnapshot(composerDraftKey);
     const stillSendable = () => {
       const draft = getComposerDraftSnapshot(composerDraftKey);
@@ -841,6 +864,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         pointerEvents="none"
       />
       <Animated.View
+        ref={composerColumnRef}
         className="relative w-full self-center"
         style={{ maxWidth: props.contentMaxWidth }}
       >
@@ -896,6 +920,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ) : null}
 
         <ComposerSurface
+          streakKey={streakKey}
           animateLayout={false}
           style={{
             borderRadius: usesLargeControls ? 31 : 27,

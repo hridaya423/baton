@@ -31,6 +31,7 @@ import {
   type WorktreeSetupCardProps,
 } from "./worktree-setup-card";
 import * as Haptics from "expo-haptics";
+import { batonPassEntering } from "./batonPass";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -2033,7 +2034,12 @@ function renderFeedEntry(
       return (
         <Animated.View
           className={cn("items-end", props.userMessageGrouping.groupedWithNext ? "mb-1" : "mb-5")}
-          {...(enterAnimated ? { entering: FadeInDown.duration(220) } : {})}
+          {...(enterAnimated
+            ? {
+                entering:
+                  batonPassEntering(Date.parse(message.createdAt)) ?? FadeInDown.duration(220),
+              }
+            : {})}
         >
           {presentation.attribution === "t3code" ? (
             <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
