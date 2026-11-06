@@ -10,7 +10,9 @@ import { AsyncResult } from "effect/reactivity";
 
 import {
   canOneClickUpdateProviderCandidate,
+  getProviderUpdateManualReason,
   getProviderUpdateRunToastView,
+  getProviderUpdateToastView,
   getProviderUpdateSidebarPillView,
   hasOneClickUpdateProviderCandidate,
   isProviderUpdateCandidate,
@@ -352,6 +354,103 @@ describe("getProviderUpdateRunToastView", () => {
       type: "error",
       title: "2 of 3 provider updates failed",
       description: "Claude: npm exited with code 1.\nMac Studio\nCodex: WebSocket closed\nLaptop",
+    });
+  });
+
+  describe("update toast", () => {
+    const state = (
+      status: "running" | "succeeded" | "failed",
+      message: string,
+    ): ServerProvider["updateState"] => ({
+      status,
+      startedAt: checkedAt,
+      finishedAt: status === "running" ? null : laterCheckedAt,
+      message,
+      output: null,
+    });
+    const base = { runSeen: false, requestFailure: null, manualReason: null } as const;
+    const codex = (input?: Partial<Parameters<typeof provider>[0]>) =>
+      provider({ driver: driver("codex"), version: "0.166.0", latestVersion: "0.167.0", ...input });
+
+    it("offers Update where this client can run it, and copy with the reason where it cannot", () => {
+      expect(getProviderUpdateToastView({ ...base, provider: codex() })).toMatchObject({
+        type: "info",
+        title: "Codex 0.167.0 is available",
+        action: { kind: "update", label: "Update", disabled: false },
+        command: null,
+      });
+      expect(
+        getProviderUpdateToastView({
+          ...base,
+          provider: codex(),
+          manualReason: "Installed in a system path.",
+        }),
+      ).toMatchObject({
+        description: "Installed in a system path.",
+        action: { kind: "copy" },
+        command: "npm install -g provider",
+      });
+    });
+
+    it("follows a run through progress, success, and a retryable failure", () => {
+      const running = state("running", "Installing 0.167.0");
+      expect(
+        getProviderUpdateToastView({
+          ...base,
+          provider: codex({ updateState: running }),
+        }),
+      ).toMatchObject({
+        type: "loading",
+        description: "Installing 0.167.0",
+        action: { kind: "update", disabled: true },
+      });
+
+      const done = codex({
+        version: "0.167.0",
+        advisoryStatus: "current",
+        updateState: state("succeeded", "Updated."),
+      });
+      expect(getProviderUpdateToastView({ ...base, provider: done })).toBeNull();
+      expect(getProviderUpdateToastView({ ...base, provider: done, runSeen: true })).toMatchObject({
+        type: "success",
+        title: "Codex updated to 0.167.0",
+        action: null,
+      });
+
+      expect(
+        getProviderUpdateToastView({
+          ...base,
+          runSeen: true,
+          provider: codex({ updateState: state("failed", "brew exited with code 1.") }),
+        }),
+      ).toMatchObject({
+        type: "error",
+        description: "brew exited with code 1.",
+        action: { kind: "update", label: "Try again" },
+      });
+      expect(
+        getProviderUpdateToastView({
+          ...base,
+          provider: codex(),
+          requestFailure: "WebSocket closed",
+        }),
+      ).toMatchObject({ type: "error", title: "Could not update Codex" });
+    });
+
+    it("explains why an update stays manual", () => {
+      const providers = [codex()];
+      const reason = (input: Partial<Parameters<typeof getProviderUpdateManualReason>[0]>) =>
+        getProviderUpdateManualReason({
+          provider: providers[0]!,
+          providers,
+          canManageProviders: true,
+          ...input,
+        });
+      expect(reason({})).toBeNull();
+      expect(reason({ canManageProviders: false })).toBe(
+        "You don't have permission to update providers here.",
+      );
+      expect(reason({ provider: codex({ canUpdate: false }) })).toBe("Update available.");
     });
   });
 });

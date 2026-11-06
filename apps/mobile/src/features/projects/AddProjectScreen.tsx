@@ -649,24 +649,35 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
                 )
               }
             />
-            {(["url", ...sortAddProjectProviderSources(readiness)] as AddProjectRemoteSource[]).map(
-              (candidate) => (
+            {(["url", ...sortAddProjectProviderSources(readiness)] as AddProjectRemoteSource[])
+              .filter((candidate) => readiness(candidate).ready)
+              .map((candidate) => (
                 <SourceControlRow
                   key={candidate}
                   source={candidate}
                   selectedEnvironmentId={selectedEnvironment.environmentId}
-                  ready={canCloneProject && readiness(candidate).ready}
+                  ready={canCloneProject}
                   hint={
-                    !canCloneProject
-                      ? "This connection cannot clone projects."
-                      : readiness(candidate).ready
-                        ? addProjectRemoteSourcePathHint(candidate)
-                        : (readiness(candidate).hint ?? "")
+                    canCloneProject
+                      ? addProjectRemoteSourcePathHint(candidate)
+                      : "This connection cannot clone projects."
                   }
                   isFirst={false}
                 />
-              ),
-            )}
+              ))}
+            <ListRow
+              title="Connect another source…"
+              icon={
+                <SymbolView
+                  name="plus"
+                  size={Platform.OS === "android" ? 24 : 17}
+                  tintColorClassName="accent-icon-muted"
+                  type="monochrome"
+                />
+              }
+              isFirst={false}
+              onPress={() => navigation.navigate("SettingsEnvironmentSourceControl")}
+            />
           </ListSection>
           {discoveryState.isPending ? (
             <AppActivityIndicator colorClassName="accent-icon-muted" />

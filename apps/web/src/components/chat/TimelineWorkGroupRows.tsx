@@ -41,8 +41,6 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { liveThoughtLine } from "@t3tools/client-runtime/work-log/presentation";
-import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
-import { transcriptRowsStartOpen } from "@t3tools/client-runtime/work-log/disclosure";
 import { observeResize } from "~/lib/observeResize";
 import { tickTextContent } from "~/lib/tickTextContent";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
@@ -57,7 +55,6 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
-import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { workEntryDisplayIndicatesToolFailure, workLogEntryIsToolLike } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
 import {
@@ -74,11 +71,9 @@ import {
   ArrowDownIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
-import { getVirtualizedScrollFadeClassName, ScrollArea } from "../ui/scroll-area";
+import { ScrollArea } from "../ui/scroll-area";
 import {
   liveWorkEntryLabel,
-  resolveWorkGroupScrollIndex,
-  shouldFollowWorkGroupAppend,
   workEntryIsVisibleInGroup,
   type MessagesTimelineRow,
   type TimelineSlashCommand,
@@ -179,7 +174,10 @@ function WorkingTimer({ createdAt, clock = false }: { createdAt: string; clock?:
   );
 }
 
-const compactWorkEntryHeight = { grouped: 24, card: 28 } as const;
+const WORKING_ENTRY_HEIGHT = 24;
+
+/** A long group opens on its newest calls; older ones wait behind one step so opening stays cheap. */
+const EXPANDED_VISIBLE_ENTRIES = 50;
 
 function ExpandedWorkGroupEntries({
   anchorKey,
@@ -194,150 +192,36 @@ function ExpandedWorkGroupEntries({
   workspaceRoot: string | undefined;
   density: "grouped" | "card";
 }) {
-  const rowHeight = compactWorkEntryHeight[density];
-  const { workGroupViewState: viewState, onToggleWorkEntry, transcriptView } = use(TimelineRowCtx);
-  const [initialScrollIndex] = useState(() =>
-    resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
-  );
-  const [restoringPosition, setRestoringPosition] = useState(initialScrollIndex !== undefined);
-  const listRef = useRef<LegendListRef>(null);
-  const [expandedContentHeight, setExpandedContentHeight] = useState(0);
-  const [fades, setFades] = useState({ top: false, bottom: false, viewportHeight: 0 });
-  const [appendState, setAppendState] = useState({ entries, follow: false });
-  // Capture the pre-change edge once per incoming array, before new layout
-  // metrics arrive. Edge/viewport changes never turn a status update into a follow.
-  if (appendState.entries !== entries) {
-    setAppendState({
-      entries,
-      follow:
-        fades.viewportHeight > 0 &&
-        shouldFollowWorkGroupAppend(appendState.entries, entries, fades.bottom ? Infinity : 0),
-    });
-  }
-
+  const { workGroupViewState: viewState, onToggleWorkEntry } = use(TimelineRowCtx);
+  const [showAll, setShowAll] = useState(() => viewState.fullGroups.has(anchorKey));
+  const hiddenCount = showAll ? 0 : Math.max(0, entries.length - EXPANDED_VISIBLE_ENTRIES);
   const groupView = {
     state: viewState,
     onToggleEntry: () => onToggleWorkEntry(disclosureAnchorKey),
   };
-  const updateScrollFades = () => {
-    const element = listRef.current?.getScrollableNode();
-    if (!element) return;
-    const distanceFromEnd = element.scrollHeight - element.clientHeight - element.scrollTop;
-    const viewportHeight = element.clientHeight;
-    const top = element.scrollTop > 1;
-    const bottom = distanceFromEnd > 1;
-    setFades((previous) =>
-      previous.top === top &&
-      previous.bottom === bottom &&
-      previous.viewportHeight === viewportHeight
-        ? previous
-        : { top, bottom, viewportHeight },
-    );
-  };
-
-  const handleScroll = () => {
-    const state = listRef.current?.getState();
-    const position = state && resolveWorkGroupScrollAnchor(state);
-    if (position) {
-      viewState.scrollPositions.set(anchorKey, {
-        entryId: position.rowId,
-        offset: position.offsetWithinRow,
-      });
-    }
-    updateScrollFades();
-  };
-
-  const handleLoad = () => {
-    const list = listRef.current;
-    const element = list?.getScrollableNode();
-    if (initialScrollIndex && list && element) {
-      // Bootstrap can report the restored target before the DOM has applied it.
-      // Reconcile once at load, before releasing the measured anchor row.
-      const offset = Math.max(
-        0,
-        Math.min(list.getState().scroll, element.scrollHeight - element.clientHeight),
-      );
-      if (Math.abs(element.scrollTop - offset) > 1) {
-        void list.scrollToOffset({ offset, animated: false });
-      }
-    }
-    setRestoringPosition(false);
-  };
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the list scroller and its content with ResizeObserver to update scroll fades
-  useLayoutEffect(() => {
-    const element = listRef.current?.getScrollableNode();
-    if (!element) return;
-    updateScrollFades();
-    const content = element.firstElementChild;
-    return observeResize(content ? [element, content] : element, updateScrollFades);
-  }, [updateScrollFades]);
-
-  const renderEntry = ({ item }: { item: TimelineWorkEntry }) => (
-    <SimpleWorkEntryRow key={item.id} workEntry={item} workspaceRoot={workspaceRoot} />
-  );
-
-  const updateExpandedContentHeight = () => {
-    const state = listRef.current?.getState();
-    let height = 0;
-    // Rows opened by hand grow the box; Verbose opens every row, so its box keeps the cap.
-    const openedByHand = transcriptRowsStartOpen(transcriptView) ? [] : viewState.expandedEntries;
-    for (const entryId of openedByHand) {
-      if (state?.indexByKey(entryId) === undefined) continue;
-      height += Math.max(0, (state.sizes.get(entryId) ?? rowHeight) - rowHeight);
-    }
-    setExpandedContentHeight(height);
-  };
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads expanded row sizes from LegendList's measured state after layout
-  useLayoutEffect(updateExpandedContentHeight, [entries, updateExpandedContentHeight]);
-
   return (
     <WorkGroupViewCtx value={groupView}>
-      <WorkLogList density={density}>
-        <LegendList
-          ref={listRef}
-          data={entries}
-          extraData={workspaceRoot}
-          keyExtractor={workEntryKey}
-          renderItem={renderEntry}
-          estimatedItemSize={rowHeight}
-          drawDistance={240}
-          recycleItems
-          {...(initialScrollIndex ? { initialScrollIndex } : {})}
-          maintainScrollAtEnd={
-            appendState.follow ? { animated: false, on: { dataChange: true } } : false
-          }
-          maintainScrollAtEndThreshold={1 / Math.max(1, fades.viewportHeight)}
-          // Measure the restored row even when an intra-row offset puts its
-          // estimated bounds outside the list's small bootstrap render window.
-          {...(restoringPosition && initialScrollIndex
-            ? { alwaysRender: { indices: [initialScrollIndex.index] } }
-            : {})}
-          maintainVisibleContentPosition
-          onLoad={handleLoad}
-          onScroll={handleScroll}
-          onLayout={updateScrollFades}
-          onItemSizeChanged={updateExpandedContentHeight}
-          tabIndex={0}
-          role="region"
-          aria-label="Tool calls"
-          data-tool-group-scroll
-          style={{ maxHeight: `calc(min(18rem, 50dvh) + ${expandedContentHeight}px)` }}
-          className={cn(
-            "scroll-py-6 overflow-x-hidden rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-            // In a card, a reserved gutter pulls the status column out of line with the header.
-            density === "grouped" && "-me-(--chat-lane-reach)",
-            (density === "grouped" || fades.top || fades.bottom) && "scrollbar-gutter-stable",
-            getVirtualizedScrollFadeClassName(fades),
-          )}
-        />
+      <WorkLogList density={density} label="Tool calls">
+        {hiddenCount > 0 ? (
+          <Button
+            className="self-start"
+            size="xs"
+            variant="ghost-muted"
+            onClick={() => {
+              viewState.fullGroups.add(anchorKey);
+              setShowAll(true);
+            }}
+          >
+            Show {hiddenCount} earlier
+          </Button>
+        ) : null}
+        {(hiddenCount > 0 ? entries.slice(hiddenCount) : entries).map((entry) => (
+          <SimpleWorkEntryRow key={entry.id} workEntry={entry} workspaceRoot={workspaceRoot} />
+        ))}
       </WorkLogList>
     </WorkGroupViewCtx>
   );
 }
-
-const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -604,12 +488,22 @@ export function LiveWorkEntryTimelineRow({
   const toolCallCards = useClientSettings((settings) => settings.toolCallCards);
   // Thoughts show as rows inside the card, so its height never changes as they come and go.
   const ctx = use(TimelineRowCtx);
+  const modes = ctx.workGroupViewState.liveCardModes;
+  const [closed, setClosed] = useState(() => modes.get(row.groupId) === "closed");
   if (!toolCallCards || !groupHasTools(row.groupedEntries)) return <LiveWorkEntryLine row={row} />;
   return (
     <LiveToolCard
       entries={row.groupedEntries}
       expanded={row.expanded}
-      onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      closed={closed}
+      onToggle={() => {
+        // Closing an open card closes it whole; opening one from either resting state shows everything.
+        const closing = row.expanded;
+        if (closing) modes.set(row.groupId, "closed");
+        else modes.delete(row.groupId);
+        setClosed(closing);
+        ctx.onToggleWorkGroup(row.groupId, row.id);
+      }}
     />
   );
 }
@@ -914,14 +808,33 @@ function withToolCard(
     : items;
 }
 
-function WorkingToolCard({ entries }: { entries: TimelineWorkEntry[] }) {
-  const [expanded, setExpanded] = useState(false);
+function WorkingToolCard({
+  entries,
+  windowKey,
+  historyOpen,
+}: {
+  entries: TimelineWorkEntry[];
+  windowKey: string;
+  historyOpen: boolean;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const modeKey = `working-tool-card:${windowKey}`;
+  const modes = ctx.workGroupViewState.liveCardModes;
+  const [mode, setMode] = useState(() => modes.get(modeKey));
+  const expanded = mode === "open";
   return (
     <>
       <LiveToolCard
         entries={entries}
         expanded={expanded}
-        onToggle={() => setExpanded((open) => !open)}
+        closed={mode === "closed"}
+        onToggle={() => {
+          const next = expanded ? "closed" : "open";
+          modes.set(modeKey, next);
+          setMode(next);
+          // The window clips and scrolls while collapsed; an open card needs it at full height.
+          if (next === "open" && !historyOpen) ctx.onToggleWorkingHistory(windowKey);
+        }}
       />
       {expanded ? (
         <WorkGroupSection
@@ -939,13 +852,21 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
   item,
   itemKey,
   current,
+  windowKey,
+  historyOpen,
 }: {
   item: WorkingWindowViewItem;
   itemKey: string;
   current: boolean;
+  windowKey: string;
+  historyOpen: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
-  if (item.kind === "tool-card") return <WorkingToolCard entries={item.entries} />;
+  if (item.kind === "tool-card") {
+    return (
+      <WorkingToolCard entries={item.entries} windowKey={windowKey} historyOpen={historyOpen} />
+    );
+  }
   if (item.kind === "text") {
     return <WorkingWindowText item={item} itemKey={itemKey} />;
   }
@@ -1059,7 +980,13 @@ function WorkingWindowView({
   const shown = history ? items.slice(history.tailStart) : items.slice(-WORKING_WINDOW_TAIL);
   const renderItem = (item: WorkingWindowViewItem) => (
     <div key={item.id} className="min-w-0">
-      <WorkingWindowItemView item={item} itemKey={itemKey} current={item === items.at(-1)} />
+      <WorkingWindowItemView
+        item={item}
+        itemKey={itemKey}
+        current={item === items.at(-1)}
+        windowKey={window.key}
+        historyOpen={open}
+      />
     </div>
   );
   const lastItem = items.at(-1);
@@ -1094,6 +1021,7 @@ function WorkingWindowView({
             key={window.key}
             items={items}
             itemKey={itemKey}
+            windowKey={window.key}
             showThinking={showThinking}
             onOverflowChange={onOverflowChange}
           />
@@ -1105,7 +1033,7 @@ function WorkingWindowView({
                 ref={spacerRef}
                 aria-hidden
                 className="shrink-0"
-                style={{ height: unmounted * (compactWorkEntryHeight.grouped + 4) }}
+                style={{ height: unmounted * (WORKING_ENTRY_HEIGHT + 4) }}
               />
             ) : null}
             {shown.map(renderItem)}
@@ -1120,11 +1048,13 @@ function WorkingWindowView({
 function CollapsedWorkingWindow({
   items,
   itemKey,
+  windowKey,
   showThinking,
   onOverflowChange,
 }: {
   items: ReadonlyArray<WorkingWindowViewItem>;
   itemKey: string;
+  windowKey: string;
   showThinking: boolean;
   onOverflowChange: (overflows: boolean) => void;
 }) {
@@ -1213,7 +1143,7 @@ function CollapsedWorkingWindow({
               ref={spacerRef}
               aria-hidden
               className="shrink-0"
-              style={{ height: start * (compactWorkEntryHeight.grouped + 4) }}
+              style={{ height: start * (WORKING_ENTRY_HEIGHT + 4) }}
             />
           ) : null}
           {items.slice(start).map((item) => (
@@ -1222,6 +1152,8 @@ function CollapsedWorkingWindow({
                 item={item}
                 itemKey={itemKey}
                 current={item === items.at(-1)}
+                windowKey={windowKey}
+                historyOpen={false}
               />
             </div>
           ))}
